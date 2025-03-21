@@ -23,6 +23,7 @@ import os
 import sys
 import json
 import time
+import re
 import gradio as gr
 import numpy as np
 import torch
@@ -33,6 +34,32 @@ import uuid
 import librosa
 import soundfile as sf
 import numpy as np
+
+# Common name patterns for speaker recognition
+COMMON_NAMES = [
+    "Alex", "Alexandra", "Alexa", "Alexander", "Alice", "Alicia", "Amy", "Anna", "Anne", "Andrew", "Andy",
+    "Bob", "Bobby", "Barbara", "Ben", "Benjamin", "Bill", "Billy", "Brian", "Bruce", 
+    "Carl", "Carlos", "Carol", "Caroline", "Catherine", "Charlie", "Charlotte", "Chris", "Christine", "Christopher", "Cindy", "Claire",
+    "Dan", "Daniel", "Dave", "David", "Debbie", "Deborah", "Diana", "Don", "Donald", "Donna", "Dorothy", "Doug", "Douglas",
+    "Ed", "Edward", "Elizabeth", "Emily", "Emma", "Eric", "Eva", "Evelyn",
+    "Frank", "Fred", "Frederick",
+    "Gary", "George", "Grace", "Greg", "Gregory",
+    "Harold", "Harry", "Heather", "Helen", "Henry", "Holly", "Howard",
+    "Ian", "Irene", "Isaac", "Ivan",
+    "Jack", "Jacob", "Jake", "James", "Jamie", "Jane", "Janet", "Jason", "Jean", "Jeff", "Jeffrey", "Jennifer", "Jenny", "Jeremy", "Jessica", "Jim", "Jimmy", "Joan", "Joe", "John", "Johnny", "Jonathan", "Joseph", "Josh", "Joshua", "Julia", "Julie", "Justin",
+    "Karen", "Kate", "Katherine", "Kathleen", "Kathryn", "Kathy", "Katie", "Keith", "Kelly", "Ken", "Kenneth", "Kevin", "Kim", "Kimberly", "Kyle",
+    "Larry", "Laura", "Lauren", "Lawrence", "Lee", "Leonard", "Leslie", "Linda", "Lisa", "Liz", "Louis", "Louise", "Lucy", "Lynn",
+    "Maggie", "Marc", "Margaret", "Maria", "Mark", "Martha", "Martin", "Mary", "Matt", "Matthew", "Melissa", "Michael", "Michelle", "Mike", "Molly",
+    "Nancy", "Natalie", "Nathan", "Neil", "Nicholas", "Nick", "Nicole", "Nina", "Noah", "Nora",
+    "Olivia", "Oscar", "Owen",
+    "Pam", "Pamela", "Patricia", "Patrick", "Paul", "Paula", "Peggy", "Peter", "Philip", "Phillip", "Phyllis",
+    "Rachel", "Ralph", "Randy", "Raymond", "Rebecca", "Richard", "Rick", "Robert", "Robin", "Roger", "Ron", "Ronald", "Rose", "Roy", "Russell", "Ruth", "Ryan",
+    "Sam", "Samantha", "Samuel", "Sandra", "Sandy", "Sara", "Sarah", "Scott", "Sean", "Sharon", "Sheila", "Shirley", "Sophia", "Spencer", "Stephanie", "Stephen", "Steve", "Steven", "Stuart", "Sue", "Susan", "Suzanne",
+    "Tammy", "Ted", "Teresa", "Terry", "Thomas", "Tim", "Timothy", "Tina", "Todd", "Tom", "Tommy", "Tony", "Tracy",
+    "Valerie", "Vanessa", "Vicky", "Victor", "Victoria", "Vincent", "Virginia",
+    "Walter", "Wendy", "William", "Willy", "Winston",
+    "Zachary", "Zoe"
+]
 
 
 # Import from local modules
@@ -438,192 +465,7 @@ with gr.Blocks(theme=cyberpunk_theme, css="""
                     elem_classes="status-bar"
                 )
         
-        # This tab has been moved to be the first tab
-            with gr.Row():
-                with gr.Column(scale=1):
-                    chat_audio_input = gr.Audio(
-                        label="🎵 Audio Input",
-                        type="filepath",
-                        interactive=True,
-                        elem_id="chat-audio-input"
-                    )
-                    
-                    with gr.Row():
-                        chat_task = gr.Radio(
-                            ["transcribe", "translate"],
-                            label="Task",
-                            value="transcribe",
-                            interactive=True
-                        )
-                        
-                        chat_num_speakers = gr.Slider(
-                            minimum=1, 
-                            maximum=10, 
-                            value=2, 
-                            step=1,
-                            label="Number of Speakers",
-                            interactive=True
-                        )
-                    
-                    with gr.Accordion("Advanced Settings", open=False):
-                        chat_segmentation_model = gr.Dropdown(
-                            choices=speaker_segmentation_models,
-                            value=speaker_segmentation_models[0],
-                            label="Segmentation Model"
-                        )
-                        
-                        chat_embedding_model = gr.Dropdown(
-                            choices=embedding2models[list(embedding2models.keys())[0]],
-                            value=embedding2models[list(embedding2models.keys())[0]][0],
-                            label="Embedding Model"
-                        )
-                        
-                        chat_threshold = gr.Slider(
-                            minimum=0.0,
-                            maximum=1.0,
-                            value=0.5,
-                            step=0.05,
-                            label="Clustering Threshold"
-                        )
-                    
-                    btn_chat_process = gr.Button("Generate Chat", variant="primary")
-                
-                with gr.Column(scale=2):
-                    # Chat container
-                    chat_container = gr.HTML(
-                        value="<div class='chat-container'>Upload an audio file to generate chat bubbles</div>",
-                        label="Conversation"
-                    )
-                    
-                    # Audio playback with current time display
-                    chat_audio_playback = gr.Audio(
-                        label="Playback with Synchronization",
-                        interactive=True,
-                        elem_id="chat-audio-playback"
-                    )
-                    
-                    # Current time display
-                    chat_current_time = gr.Markdown(
-                        value="00:00",
-                        label="Current Time"
-                    )
-                    
-                    # JavaScript for syncing audio with chat bubbles
-                    gr.HTML("""
-                    <script>
-                    // Make functions globally accessible
-                    window.setupAudioSync = function() {
-                        console.log('Setting up audio sync');
-                        const audioElement = document.querySelector('#chat-audio-playback audio');
-                        if (!audioElement) {
-                            console.log('Audio element not found, retrying in 1 second');
-                            setTimeout(setupAudioSync, 1000);
-                            return;
-                        }
-                        
-                        console.log('Found audio element, setting up listener');
-                        
-                        // Remove previous listeners if any
-                        audioElement.removeEventListener('timeupdate', updateActiveBubble);
-                        
-                        // Add timeupdate listener
-                        audioElement.addEventListener('timeupdate', updateActiveBubble);
-                        
-                        console.log('Listener setup complete');
-                    }
-                    
-                    window.updateActiveBubble = function() {
-                        const audioElement = document.querySelector('#chat-audio-playback audio');
-                        if (!audioElement) return;
-                        
-                        const currentTime = audioElement.currentTime;
-                        console.log('Current time:', currentTime);
-                        
-                        // Update the current time display
-                        const minutes = Math.floor(currentTime / 60);
-                        const seconds = Math.floor(currentTime % 60);
-                        const timeString = `${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
-                        
-                        // Find the current time display element and update it
-                        const timeElement = document.querySelector('div[data-testid="markdown"][aria-label="Current Time"] p');
-                        if (timeElement) {
-                            timeElement.textContent = timeString;
-                        }
-                        
-                        // Find all chat messages
-                        const chatMessages = document.querySelectorAll('.chat-message');
-                        chatMessages.forEach(function(message) {
-                            const startTime = parseFloat(message.getAttribute('data-start'));
-                            const endTime = parseFloat(message.getAttribute('data-end'));
-                            
-                            // Highlight the current message
-                            if (currentTime >= startTime && currentTime <= endTime) {
-                                message.classList.add('active-message');
-                                // Scroll to the message if not already visible
-                                const container = document.querySelector('.chat-container');
-                                if (container) {
-                                    const messageTop = message.offsetTop;
-                                    const messageHeight = message.offsetHeight;
-                                    const containerTop = container.scrollTop;
-                                    const containerHeight = container.offsetHeight;
-                                    
-                                    if (messageTop < containerTop || messageTop + messageHeight > containerTop + containerHeight) {
-                                        message.scrollIntoView({ behavior: 'smooth', block: 'center' });
-                                    }
-                                }
-                            } else {
-                                message.classList.remove('active-message');
-                            }
-                        });
-                    }
-                    
-                    // Set up observers to detect when the audio element is added or updated
-                    const observer = new MutationObserver(function(mutations) {
-                        mutations.forEach(function(mutation) {
-                            if (mutation.type === 'childList' && document.querySelector('#chat-audio-playback audio')) {
-                                console.log('Audio element added or changed');
-                                setupAudioSync();
-                            }
-                        });
-                    });
-                    
-                    // Start observing when DOM is loaded
-                    document.addEventListener('DOMContentLoaded', function() {
-                        const target = document.getElementById('chat-audio-playback');
-                        if (target) {
-                            observer.observe(target, { childList: true, subtree: true });
-                            setupAudioSync();
-                        } else {
-                            console.log('Target element not found for observation');
-                            // Try again after a delay
-                            setTimeout(function() {
-                                const retryTarget = document.getElementById('chat-audio-playback');
-                                if (retryTarget) {
-                                    observer.observe(retryTarget, { childList: true, subtree: true });
-                                    setupAudioSync();
-                                }
-                            }, 2000);
-                        }
-                    });
-                    
-                    // Also set up on load for when the page is already loaded
-                    if (document.readyState === 'complete' || document.readyState === 'interactive') {
-                        setTimeout(function() {
-                            const target = document.getElementById('chat-audio-playback');
-                            if (target) {
-                                observer.observe(target, { childList: true, subtree: true });
-                                setupAudioSync();
-                            }
-                        }, 1000);
-                    }
-                    </script>
-                    """)
-            
-            with gr.Row():
-                chat_status = gr.Markdown(
-                    value="*System ready. Upload an audio file to begin.*", 
-                    elem_classes="status-bar"
-                )
+        # Audio Analysis Tab
         
         # Audio Analysis Tab
         with gr.TabItem("📊 Audio Analysis"):
@@ -752,6 +594,59 @@ with gr.Blocks(theme=cyberpunk_theme, css="""
         show_progress=True
     )
     
+    # Helper function to identify speaker names in text
+    def identify_speaker_names(segments):
+        # Dictionary to store detected names for each speaker ID
+        detected_names = {}
+        name_mentions = {}
+        
+        # First pass: find potential speaker names in the text
+        for segment in segments:
+            speaker_id = segment['speaker']
+            text = segment['text']
+            
+            # Extract names from text
+            # Look for common name patterns directly
+            for name in COMMON_NAMES:
+                # Look for the name as a whole word with word boundaries
+                pattern = r'\b' + re.escape(name) + r'\b'
+                if re.search(pattern, text, re.IGNORECASE):
+                    # Count name mentions
+                    if name not in name_mentions:
+                        name_mentions[name] = 0
+                    name_mentions[name] += 1
+            
+            # Look for "I'm [Name]" or "My name is [Name]" patterns
+            name_intro_patterns = [
+                r"I'?m\s+(\w+)",
+                r"[Mm]y name is\s+(\w+)",
+                r"[Cc]all me\s+(\w+)",
+                r"[Tt]his is\s+(\w+)"  
+            ]
+            
+            for pattern in name_intro_patterns:
+                matches = re.findall(pattern, text)
+                for match in matches:
+                    if match in COMMON_NAMES:
+                        if speaker_id not in detected_names:
+                            detected_names[speaker_id] = match
+                        elif detected_names[speaker_id] != match:
+                            # If multiple names are detected for the same speaker, keep the most frequent one
+                            if match not in name_mentions:
+                                name_mentions[match] = 0
+                            name_mentions[match] += 3  # Give higher weight to explicit introduction
+        
+        # Second pass: assign names to speakers based on frequency and context
+        for speaker_id in set([segment['speaker'] for segment in segments]):
+            if speaker_id not in detected_names:
+                # Find the most mentioned name that hasn't been assigned yet
+                available_names = [name for name, count in sorted(name_mentions.items(), key=lambda x: x[1], reverse=True) 
+                                 if name not in detected_names.values()]                
+                if available_names:
+                    detected_names[speaker_id] = available_names[0]
+        
+        return detected_names
+
     # Function to generate chat bubbles from segments
     def process_chat(audio, task, segmentation_model, embedding_model, num_speakers, threshold):
         try:
@@ -784,20 +679,32 @@ with gr.Blocks(theme=cyberpunk_theme, css="""
             if "segments" in result:
                 segments = result["segments"]
                 print(f"Found {len(segments)} segments")
+                
+                # Try to identify real speaker names
+                speaker_names = identify_speaker_names(segments)
+                print(f"Identified speaker names: {speaker_names}")
+                
                 chat_html = "<div class='chat-container'>"
                 
                 # Generate chat bubbles for each segment
                 for i, segment in enumerate(segments):
-                    speaker_name = segment['speaker'] if 'speaker' in segment else f"Speaker {i % 2}"
+                    # Get the speaker ID
+                    raw_speaker_id = segment['speaker'] if 'speaker' in segment else f"Speaker {i % 2}"
                     
-                    # Try to extract speaker number or use index for alternating styles
                     try:
-                        if speaker_name.startswith("Speaker"):
-                            speaker_id = int(speaker_name.split()[-1])
+                        if raw_speaker_id.startswith("Speaker"):
+                            speaker_id = int(raw_speaker_id.split()[-1])
+                            # Use identified name if available, otherwise use Speaker X
+                            if raw_speaker_id in speaker_names and speaker_names[raw_speaker_id]:
+                                speaker_name = speaker_names[raw_speaker_id]
+                            else:
+                                speaker_name = raw_speaker_id
                         else:
                             speaker_id = i % 2
+                            speaker_name = raw_speaker_id
                     except (ValueError, IndexError):
                         speaker_id = i % 2
+                        speaker_name = f"Speaker {speaker_id}"
                         
                     speaker_class = f"speaker-{speaker_id % 2}"  # Alternate between two speaker styles
                     

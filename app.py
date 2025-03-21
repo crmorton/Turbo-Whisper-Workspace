@@ -35,6 +35,14 @@ import librosa
 import soundfile as sf
 import numpy as np
 
+# Import LLM helper module
+try:
+    import llm_helper
+    LLM_AVAILABLE = True
+except ImportError:
+    print("LLM helper module not available. Using fallback methods.")
+    LLM_AVAILABLE = False
+
 # Common name patterns for speaker recognition
 COMMON_NAMES = [
     "Alex", "Alexandra", "Alexa", "Alexander", "Alice", "Alicia", "Amy", "Anna", "Anne", "Andrew", "Andy",
@@ -369,6 +377,32 @@ with gr.Blocks(theme=cyberpunk_theme, css="""
         gap: 10px;
         margin-top: 15px;
     }
+    
+    /* Conversation Summary and Topics */
+    .conversation-summary, .conversation-topics {
+        background-color: #222;
+        border-radius: 8px;
+        padding: 15px;
+        margin-top: 20px;
+        border-left: 4px solid #00ff9d;
+    }
+    .conversation-summary h3, .conversation-topics h4 {
+        color: #00ff9d;
+        margin-top: 0;
+        margin-bottom: 10px;
+    }
+    .conversation-summary p {
+        color: #ddd;
+        line-height: 1.5;
+    }
+    .conversation-topics ul {
+        margin: 0;
+        padding-left: 20px;
+    }
+    .conversation-topics li {
+        color: #ddd;
+        margin-bottom: 5px;
+    }
 """) as demo:
     with gr.Row():
         with gr.Column():
@@ -596,15 +630,31 @@ with gr.Blocks(theme=cyberpunk_theme, css="""
     
     # Helper function to identify speaker names in text
     def identify_speaker_names(segments):
-        # Dictionary to store detected names for each speaker ID
+        # Try to use LLM for name identification if available
+        if LLM_AVAILABLE:
+            try:
+                # First try the LLM-based approach
+                llm_names = llm_helper.identify_speaker_names_llm(segments)
+                if llm_names and len(llm_names) > 0:
+                    print(f"LLM identified names: {llm_names}")
+                    return llm_names
+            except Exception as e:
+                print(f"Error using LLM for name identification: {e}")
+        
+        # Fallback to rule-based approach
+        print("Using fallback method for name identification")
+        if LLM_AVAILABLE:
+            return llm_helper.identify_speaker_names_fallback(segments)
+            
+        # Built-in fallback if LLM helper is not available
         detected_names = {}
         name_mentions = {}
-        
+            
         # First pass: find potential speaker names in the text
         for segment in segments:
             speaker_id = segment['speaker']
             text = segment['text']
-            
+                
             # Extract names from text
             # Look for common name patterns directly
             for name in COMMON_NAMES:
@@ -615,7 +665,7 @@ with gr.Blocks(theme=cyberpunk_theme, css="""
                     if name not in name_mentions:
                         name_mentions[name] = 0
                     name_mentions[name] += 1
-            
+                
             # Look for "I'm [Name]" or "My name is [Name]" patterns
             name_intro_patterns = [
                 r"I'?m\s+(\w+)",
@@ -641,7 +691,7 @@ with gr.Blocks(theme=cyberpunk_theme, css="""
             if speaker_id not in detected_names:
                 # Find the most mentioned name that hasn't been assigned yet
                 available_names = [name for name, count in sorted(name_mentions.items(), key=lambda x: x[1], reverse=True) 
-                                 if name not in detected_names.values()]                
+                                if name not in detected_names.values()]                
                 if available_names:
                     detected_names[speaker_id] = available_names[0]
         
@@ -730,6 +780,31 @@ with gr.Blocks(theme=cyberpunk_theme, css="""
                         <div class='message-time'>{time_format(start_time)} - {time_format(end_time)}</div>
                     </div>
                     """
+                
+                # Add conversation summary if LLM is available
+                if LLM_AVAILABLE:
+                    try:
+                        summary = llm_helper.summarize_conversation(segments)
+                        topics = llm_helper.extract_topics(segments)
+                        
+                        if summary:
+                            chat_html += f"""
+                            <div class='conversation-summary'>
+                                <h3>🤖 AI Summary</h3>
+                                <p>{summary}</p>
+                            </div>
+                            """
+                        
+                        if topics and len(topics) > 0:
+                            topics_html = "<ul>" + "".join([f"<li>{topic}</li>" for topic in topics]) + "</ul>"
+                            chat_html += f"""
+                            <div class='conversation-topics'>
+                                <h4>📌 Main Topics</h4>
+                                {topics_html}
+                            </div>
+                            """
+                    except Exception as e:
+                        print(f"Error generating summary: {e}")
                 
                 chat_html += "</div>"
                 

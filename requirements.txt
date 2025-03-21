@@ -33,6 +33,7 @@ uvicorn>=0.34.0
 # Utilities
 python-dotenv>=1.0.1
 tqdm>=4.67.1
+llama-cpp-python>=0.3.8
 
 # Development
 ruff>=0.11.1
