@@ -283,6 +283,12 @@ def plot_speaker_diarization(segments, duration, title="Speaker Diarization", fi
     for i, (speaker, times) in enumerate(speakers.items()):
         color = CYBERPUNK_COLORS[i % len(CYBERPUNK_COLORS)]
         
+        # Create a display label that doesn't start with underscore
+        # (matplotlib ignores labels starting with underscore in legend)
+        display_label = speaker
+        if display_label.startswith('_'):
+            display_label = display_label.lstrip('_')
+        
         # Plot each segment for this speaker
         for start, end in times:
             ax.barh(
@@ -292,7 +298,7 @@ def plot_speaker_diarization(segments, duration, title="Speaker Diarization", fi
                 height=0.5,
                 color=color,
                 alpha=0.8,
-                label=speaker if (start, end) == times[0] else ""
+                label=display_label if (start, end) == times[0] else ""
             )
         
         y_pos += 1

@@ -25,13 +25,61 @@ except ImportError:
     logger.warning("llama-cpp-python not available. Using fallback methods for name recognition and summarization.")
     LLAMA_AVAILABLE = False
 
-# Path to the model file
-MODEL_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "models", "Qwen2.5-Dyanka-7B-Preview.IQ4_XS.gguf")
-MODEL_REPO = "mradermacher/Qwen2.5-Dyanka-7B-Preview-GGUF"
-MODEL_FILENAME = "Qwen2.5-Dyanka-7B-Preview.IQ4_XS.gguf"
+# Available models
+AVAILABLE_MODELS = {
+    "Qwen2.5-Dyanka-7B": {
+        "repo": "mradermacher/Qwen2.5-Dyanka-7B-Preview-GGUF",
+        "filename": "Qwen2.5-Dyanka-7B-Preview.IQ4_XS.gguf"
+    },
+    "Phi-3-mini-4K-Instruct": {
+        "repo": "microsoft/Phi-3-mini-4k-instruct-GGUF",
+        "filename": "Phi-3-mini-4k-instruct-Q4_K_M.gguf"
+    },
+    "Mistral-7B-Instruct": {
+        "repo": "TheBloke/Mistral-7B-Instruct-v0.2-GGUF",
+        "filename": "mistral-7b-instruct-v0.2.Q4_K_M.gguf"
+    }
+}
+
+# Default model
+DEFAULT_MODEL = "Qwen2.5-Dyanka-7B"
+
+# Current model selection
+CURRENT_MODEL = DEFAULT_MODEL
+
+# Path to the models directory
+MODELS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "models")
 
 # LLM instance (lazy-loaded)
 _llm_instance = None
+
+def get_model_path(model_name=None):
+    """Get the path to the specified model file"""
+    if model_name is None:
+        model_name = CURRENT_MODEL
+        
+    if model_name not in AVAILABLE_MODELS:
+        logger.warning(f"Unknown model: {model_name}, using default")
+        model_name = DEFAULT_MODEL
+        
+    model_info = AVAILABLE_MODELS[model_name]
+    return os.path.join(MODELS_DIR, model_info["filename"])
+
+def set_current_model(model_name):
+    """Set the current model to use"""
+    global CURRENT_MODEL, _llm_instance
+    
+    if model_name not in AVAILABLE_MODELS:
+        logger.warning(f"Unknown model: {model_name}, using default")
+        model_name = DEFAULT_MODEL
+    
+    # Only change if different
+    if CURRENT_MODEL != model_name:
+        CURRENT_MODEL = model_name
+        # Reset the LLM instance to force reloading with new model
+        _llm_instance = None
+        
+    return CURRENT_MODEL
 
 def get_llm() -> Optional[Any]:
     """Get or initialize the LLM instance"""
@@ -42,20 +90,23 @@ def get_llm() -> Optional[Any]:
         
     if _llm_instance is None:
         try:
+            model_path = get_model_path()
+            model_info = AVAILABLE_MODELS[CURRENT_MODEL]
+            
             # Check if model exists locally
-            if os.path.exists(MODEL_PATH):
-                logger.info(f"Loading model from local path: {MODEL_PATH}")
-                _llm_instance = Llama(model_path=MODEL_PATH)
+            if os.path.exists(model_path):
+                logger.info(f"Loading model from local path: {model_path}")
+                _llm_instance = Llama(model_path=model_path)
             else:
                 # Create models directory if it doesn't exist
-                os.makedirs(os.path.dirname(MODEL_PATH), exist_ok=True)
+                os.makedirs(MODELS_DIR, exist_ok=True)
                 
                 # Download from Hugging Face
-                logger.info(f"Downloading model from {MODEL_REPO}")
+                logger.info(f"Downloading model from {model_info['repo']}")
                 _llm_instance = Llama.from_pretrained(
-                    repo_id=MODEL_REPO,
-                    filename=MODEL_FILENAME,
-                    local_dir=os.path.dirname(MODEL_PATH)
+                    repo_id=model_info['repo'],
+                    filename=model_info['filename'],
+                    local_dir=MODELS_DIR
                 )
                 
             logger.info("LLM initialized successfully")

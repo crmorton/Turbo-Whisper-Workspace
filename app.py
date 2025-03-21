@@ -39,9 +39,11 @@ import numpy as np
 try:
     import llm_helper
     LLM_AVAILABLE = True
+    AVAILABLE_LLM_MODELS = list(llm_helper.AVAILABLE_MODELS.keys())
 except ImportError:
     print("LLM helper module not available. Using fallback methods.")
     LLM_AVAILABLE = False
+    AVAILABLE_LLM_MODELS = []
 
 # Common name patterns for speaker recognition
 COMMON_NAMES = [
@@ -414,8 +416,8 @@ with gr.Blocks(theme=cyberpunk_theme, css="""
             """)
             
     with gr.Tabs(elem_classes="tabbed-content") as tabs:
-        # Transcription Tab
-        with gr.TabItem("🎤 Transcription & Diarization"):
+        # Chat Bubbles Tab (now primary and merged with transcription)
+        with gr.TabItem("💬 CyberVox Chat"):
             with gr.Row():
                 with gr.Column(scale=2):
                     audio_input = gr.Audio(
@@ -423,6 +425,15 @@ with gr.Blocks(theme=cyberpunk_theme, css="""
                         type="filepath",
                         interactive=True,
                         elem_id="audio-input"
+                    )
+                    
+                    # Add audio playback component
+                    audio_playback = gr.Audio(
+                        label="Audio Playback",
+                        type="filepath",
+                        interactive=False,
+                        visible=False,
+                        elem_id="audio-playback"
                     )
                     
                     with gr.Row():
@@ -468,16 +479,39 @@ with gr.Blocks(theme=cyberpunk_theme, css="""
                             step=0.05,
                             label="Clustering Threshold"
                         )
-                    
-                    btn_process = gr.Button("Process Audio", variant="primary")
+                        
+                        # LLM model selection
+                        if LLM_AVAILABLE and AVAILABLE_LLM_MODELS:
+                            llm_model = gr.Dropdown(
+                                choices=AVAILABLE_LLM_MODELS,
+                                value=llm_helper.CURRENT_MODEL,
+                                label="LLM Model for Summarization",
+                                info="Select the LLM model to use for speaker identification and summarization"
+                            )
+                            
+                            # Function to handle model change
+                            def change_llm_model(model_name):
+                                if LLM_AVAILABLE:
+                                    llm_helper.set_current_model(model_name)
+                                    print(f"Changed LLM model to: {model_name}")
+                            
+                            llm_model.change(fn=change_llm_model, inputs=llm_model, outputs=[])
+                    btn_process = gr.Button("Generate Chat", variant="primary")
                 
                 with gr.Column(scale=3):
+                    # Chat container for displaying chat bubbles
+                    chat_container = gr.HTML(
+                        label="Chat Bubbles",
+                        elem_id="chat-bubbles-container",
+                        value="<div class='chat-container'>Upload an audio file and click 'Generate Chat' to start.</div>"
+                    )
+                    
                     with gr.Tabs():
-                        with gr.TabItem("Conversation"):
+                        with gr.TabItem("Summary"):
                             output_conversation = gr.Markdown(
-                                label="Conversation",
+                                label="Conversation Summary",
                                 elem_id="conversation-output",
-                                value="Upload an audio file and click 'Process Audio' to start."
+                                value="Upload an audio file and click 'Generate Chat' to start. A summary will appear here."
                             )
                         
                         with gr.TabItem("Raw Text"):
@@ -698,14 +732,17 @@ with gr.Blocks(theme=cyberpunk_theme, css="""
         return detected_names
 
     # Function to generate chat bubbles from segments
-    def process_chat(audio, task, segmentation_model, embedding_model, num_speakers, threshold):
+    def process_chat(audio, task, segmentation_model, embedding_model, num_speakers, threshold, llm_model=None):
+        # Set the LLM model if provided
+        if LLM_AVAILABLE and llm_model and llm_model in AVAILABLE_LLM_MODELS:
+            llm_helper.set_current_model(llm_model)
         try:
             # Update status
-            yield None, None, "*Processing audio...*"
+            yield "<div class='chat-container'>Processing audio...</div>", None, "", "*Processing audio...*"
             
             # Check if audio is provided
             if audio is None:
-                yield None, None, "*Please upload an audio file.*"
+                yield "<div class='chat-container'>Please upload an audio file.</div>", None, "", "*Please upload an audio file.*"
                 return
                 
             # Process audio file
@@ -723,7 +760,7 @@ with gr.Blocks(theme=cyberpunk_theme, css="""
             print(f"Result keys: {result.keys()}")
             
             if isinstance(result, dict) and "error" in result:
-                yield f"<div class='chat-container'>Error: {result['error']}</div>", None, f"*Error: {result['error']}*"
+                yield f"<div class='chat-container'>Error: {result['error']}</div>", None, "", f"*Error: {result['error']}*"
                 return
                 
             if "segments" in result:
@@ -780,14 +817,18 @@ with gr.Blocks(theme=cyberpunk_theme, css="""
                         <div class='message-time'>{time_format(start_time)} - {time_format(end_time)}</div>
                     </div>
                     """
-                
                 # Add conversation summary if LLM is available
+                summary_markdown = ""
                 if LLM_AVAILABLE:
                     try:
                         summary = llm_helper.summarize_conversation(segments)
                         topics = llm_helper.extract_topics(segments)
                         
+                        # Create summary for the Summary tab
                         if summary:
+                            summary_markdown += f"## 🤖 AI Summary\n\n{summary}\n\n"
+                            
+                            # Also add to chat HTML
                             chat_html += f"""
                             <div class='conversation-summary'>
                                 <h3>🤖 AI Summary</h3>
@@ -796,6 +837,9 @@ with gr.Blocks(theme=cyberpunk_theme, css="""
                             """
                         
                         if topics and len(topics) > 0:
+                            summary_markdown += f"## 📌 Main Topics\n\n" + "\n".join([f"- {topic}" for topic in topics])
+                            
+                            # Also add to chat HTML
                             topics_html = "<ul>" + "".join([f"<li>{topic}</li>" for topic in topics]) + "</ul>"
                             chat_html += f"""
                             <div class='conversation-topics'>
@@ -804,6 +848,8 @@ with gr.Blocks(theme=cyberpunk_theme, css="""
                             </div>
                             """
                     except Exception as e:
+                        print(f"Error generating summary: {e}")
+                        summary_markdown = f"*Error generating summary: {e}*"
                         print(f"Error generating summary: {e}")
                 
                 chat_html += "</div>"
@@ -833,35 +879,56 @@ with gr.Blocks(theme=cyberpunk_theme, css="""
                 </div>
                 """
                 
-                # Return chat HTML, audio for playback, and status
-                yield chat_html, audio_path, f"*Processing completed successfully! Identified {num_speakers} speakers.*"
+                # Return chat HTML, audio for playback, summary, and status
+                yield chat_html, audio_path, summary_markdown, f"*Processing completed successfully! Identified {num_speakers} speakers.*"
                 return
             else:
-                yield "<div class='chat-container'>No conversation segments found</div>", None, "*Processing completed, but no conversation segments were found.*"
+                yield "<div class='chat-container'>No conversation segments found</div>", None, "", "*Processing completed, but no conversation segments were found.*"
                 return
                 
         except Exception as e:
             print(f"Error in process_chat: {e}")
-            yield None, None, f"*Error: {str(e)}*"
+            yield None, None, "", f"*Error: {str(e)}*"
             return
     
     # Connect the chat process button
-    btn_chat_process.click(
-        fn=process_chat,
-        inputs=[
-            chat_audio_input,
-            chat_task,
-            chat_segmentation_model,
-            chat_embedding_model,
-            chat_num_speakers,
-            chat_threshold
-        ],
-        outputs=[
-            chat_container,
-            chat_audio_playback,
-            chat_status
-        ]
-    )
+    if LLM_AVAILABLE and AVAILABLE_LLM_MODELS:
+        btn_process.click(
+            fn=process_chat,
+            inputs=[
+                audio_input,
+                task,
+                segmentation_model,
+                embedding_model,
+                num_speakers,
+                threshold,
+                llm_model  # Add LLM model selection
+            ],
+            outputs=[
+                chat_container,   # Chat bubbles container
+                audio_playback,   # Audio playback
+                output_conversation, # Summary tab
+                status            # Status message
+            ]
+        )
+    else:
+        btn_process.click(
+            fn=process_chat,
+            inputs=[
+                audio_input,
+                task,
+                segmentation_model,
+                embedding_model,
+                num_speakers,
+                threshold
+            ],
+            outputs=[
+                chat_container,   # Chat bubbles container
+                audio_playback,   # Audio playback
+                output_conversation, # Summary tab
+                status            # Status message
+            ]
+        )
     
     # Audio analysis functions
     def analyze_audio(audio_path):
