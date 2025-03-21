@@ -506,12 +506,8 @@ with gr.Blocks(theme=cyberpunk_theme, css="""
                    None)
         
         try:
-            # Process audio
-            yield (
-                "Processing audio...",
-                "*Starting transcription and diarization...*",
-                None
-            )
+            # Show info message
+            gr.Info("Processing audio...")
             
             # Process with transcription and diarization using session-specific pipeline
             result = process_audio_with_diarization(
@@ -527,31 +523,30 @@ with gr.Blocks(theme=cyberpunk_theme, css="""
             
             # Check for errors
             if isinstance(result, dict) and "error" in result:
-                yield (
+                return (
                     "An error occurred during processing.",
                     f"*Error: {result['error']}*",
                     result
                 )
-                return
             
             # Handle successful processing
             if "conversation" in result:
-                yield (
+                return (
                     result["text"],
                     f"*Processing completed successfully! Identified {num_speakers} speakers.*",
                     result
                 )
-                return result["conversation"], f"*Processing completed successfully! Identified {num_speakers} speakers.*", result
             else:
-                yield (
+                return (
                     result["text"],
                     "*Processing completed, but speaker diarization might not be accurate.*",
                     result
                 )
-                return
             
         except Exception as e:
-            yield (
+            import traceback
+            traceback.print_exc()
+            return (
                 "An error occurred during processing.",
                 f"*Error: {str(e)}*",
                 {"error": str(e)}
@@ -863,9 +858,7 @@ with gr.Blocks(theme=cyberpunk_theme, css="""
             return None, None, None, None, "*Error: No audio file provided*", None
         
         try:
-            # Update status
-            yield None, None, None, None, "*Analyzing audio...*", None
-            
+            # Show info message
             gr.Info("Loading and analyzing audio file...")
             
             # Get pipeline for this session
@@ -940,12 +933,12 @@ with gr.Blocks(theme=cyberpunk_theme, css="""
                 info_text += f"\n\n### 🎤 Speaker Analysis\n\n*Speaker diarization unavailable or no speakers detected*"
             
             gr.Info("Analysis completed successfully!")
-            yield waveform, spectrogram, pitch_track, chromagram, "*Analysis completed successfully!*", info_text
+            return waveform, spectrogram, pitch_track, chromagram, "*Analysis completed successfully!*", info_text
             
         except Exception as e:
             import traceback
             traceback.print_exc()
-            yield None, None, None, None, f"*Error during analysis: {str(e)}*", None
+            return None, None, None, None, f"*Error during analysis: {str(e)}*", None
     
     # Connect the analyze button
     btn_analyze.click(

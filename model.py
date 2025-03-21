@@ -473,7 +473,7 @@ def get_speaker_embedding_model(model_name: str) -> str:
 _DIARIZATION_CACHE = {}
 
 def get_speaker_diarization(
-    segmentation_model: str, embedding_model: str, num_clusters: int, threshold: float
+    segmentation_model: str, embedding_model: str, num_clusters: int, threshold: float, use_gpu: bool = True
 ):
     # Create a cache key based on the input parameters
     cache_key = f"{segmentation_model}_{embedding_model}_{num_clusters}_{threshold}"
@@ -488,7 +488,8 @@ def get_speaker_diarization(
     
     # Check if CUDA is available for ONNX acceleration
     import torch
-    provider = "cuda" if torch.cuda.is_available() else "cpu"
+    # Only use CUDA if it's available AND use_gpu is True
+    provider = "cuda" if (torch.cuda.is_available() and use_gpu) else "cpu"
     
     config = sherpa_onnx.OfflineSpeakerDiarizationConfig(
         segmentation=sherpa_onnx.OfflineSpeakerSegmentationModelConfig(

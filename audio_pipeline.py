@@ -10,6 +10,9 @@ import librosa
 import numpy as np
 from typing import Dict, List, Optional, Union, Any, Tuple
 
+# Import from diar.py
+from diar import SpeakerDiarizer, format_as_conversation
+
 # Import LLM helper if available
 try:
     import llm_helper
@@ -218,15 +221,29 @@ class AudioProcessingPipeline:
                 return True
         
         try:
-            from speaker_diarizer import SpeakerDiarizer
-            
+            # We already imported SpeakerDiarizer from diar at the top of the file
             # Create SpeakerDiarizer instance
-            self.diarizer = SpeakerDiarizer(
-                segmentation_model=segmentation_model,
-                embedding_model=embedding_model,
-                num_speakers=num_speakers,
-                threshold=threshold
-            )
+            try:
+                # First try with GPU provider
+                self.diarizer = SpeakerDiarizer(
+                    segmentation_model=segmentation_model,
+                    embedding_model=embedding_model,
+                    num_speakers=num_speakers,
+                    threshold=threshold
+                )
+            except Exception as gpu_error:
+                # If GPU fails, try with CPU provider
+                print(f"GPU diarization failed: {gpu_error}")
+                print("Falling back to CPU for diarization (this will be slower)")
+                
+                # Try again with CPU provider explicitly specified
+                self.diarizer = SpeakerDiarizer(
+                    segmentation_model=segmentation_model,
+                    embedding_model=embedding_model,
+                    num_speakers=num_speakers,
+                    threshold=threshold,
+                    use_gpu=False  # Force CPU mode
+                )
             
             # Cache the diarizer for future use
             _PIPELINE_CACHE['diarizer'] = self.diarizer
@@ -372,23 +389,32 @@ class AudioProcessingPipeline:
         if not LLM_AVAILABLE:
             print("LLM helper not available. Cannot identify speaker names.")
             return {}
+        
+        # Check if segments is empty or invalid
+        if not segments or not isinstance(segments, list):
+            print("No valid segments provided for speaker name identification")
+            return {}
             
         try:
             # First try the LLM-based approach
-            llm_names = llm_helper.identify_speaker_names_llm(segments)
-            if llm_names and len(llm_names) > 0:
-                print(f"LLM identified names: {llm_names}")
-                return llm_names
+            try:
+                llm_names = llm_helper.identify_speaker_names_llm(segments)
+                if llm_names and len(llm_names) > 0:
+                    print(f"LLM identified names: {llm_names}")
+                    return llm_names
+            except Exception as e:
+                print(f"Error using LLM for name identification: {e}")
+                # Continue to fallback method
                 
+            # Fallback to rule-based approach
+            print("Using fallback method for name identification")
+            try:
+                return llm_helper.identify_speaker_names_fallback(segments)
+            except Exception as e:
+                print(f"Error using fallback name identification: {e}")
+                return {}
         except Exception as e:
-            print(f"Error using LLM for name identification: {e}")
-            
-        # Fallback to rule-based approach
-        print("Using fallback method for name identification")
-        try:
-            return llm_helper.identify_speaker_names_fallback(segments)
-        except Exception as e:
-            print(f"Error using fallback name identification: {e}")
+            print(f"Unexpected error in identify_speaker_names: {e}")
             return {}
     
     def generate_summary(self, segments: List[Dict[str, Any]]) -> str:
@@ -404,9 +430,16 @@ class AudioProcessingPipeline:
         if not LLM_AVAILABLE:
             print("LLM helper not available. Cannot generate summary.")
             return ""
+        
+        # Check if segments is empty or invalid
+        if not segments or not isinstance(segments, list):
+            print("No valid segments provided for summary generation")
+            return ""
             
         try:
-            summary = llm_helper.summarize_conversation(segments)
+            # Limit the number of segments to avoid overwhelming the LLM
+            limited_segments = segments[:20] if len(segments) > 20 else segments
+            summary = llm_helper.summarize_conversation(limited_segments)
             return summary or ""
         except Exception as e:
             print(f"Error generating summary: {e}")
@@ -425,9 +458,16 @@ class AudioProcessingPipeline:
         if not LLM_AVAILABLE:
             print("LLM helper not available. Cannot extract topics.")
             return []
+        
+        # Check if segments is empty or invalid
+        if not segments or not isinstance(segments, list):
+            print("No valid segments provided for topic extraction")
+            return []
             
         try:
-            topics = llm_helper.extract_topics(segments)
+            # Limit the number of segments to avoid overwhelming the LLM
+            limited_segments = segments[:20] if len(segments) > 20 else segments
+            topics = llm_helper.extract_topics(limited_segments)
             return topics or []
         except Exception as e:
             print(f"Error extracting topics: {e}")
@@ -523,25 +563,41 @@ class AudioProcessingPipeline:
             
             # Step 5: Add LLM enhancements if available
             if LLM_AVAILABLE:
-                llm_start = time.time()
-                
-                # Identify speaker names
-                speaker_names = self.identify_speaker_names(segments)
-                if speaker_names and any(speaker_names.values()):
-                    result["speaker_names"] = speaker_names
+                try:
+                    llm_start = time.time()
                     
-                # Generate summary
-                summary = self.generate_summary(segments)
-                if summary:
-                    result["summary"] = summary
-                    
-                # Extract topics
-                topics = self.extract_topics(segments)
-                if topics:
-                    result["topics"] = topics
-                    
-                llm_time = time.time() - llm_start
-                result["processing_times"]["llm"] = llm_time
+                    # Identify speaker names
+                    try:
+                        speaker_names = self.identify_speaker_names(segments)
+                        if speaker_names and any(speaker_names.values()):
+                            result["speaker_names"] = speaker_names
+                    except Exception as e:
+                        print(f"Error identifying speaker names: {e}")
+                        result["speaker_names"] = {}
+                        
+                    # Generate summary
+                    try:
+                        summary = self.generate_summary(segments)
+                        if summary:
+                            result["summary"] = summary
+                    except Exception as e:
+                        print(f"Error generating summary: {e}")
+                        result["summary"] = ""
+                        
+                    # Extract topics
+                    try:
+                        topics = self.extract_topics(segments)
+                        if topics:
+                            result["topics"] = topics
+                    except Exception as e:
+                        print(f"Error extracting topics: {e}")
+                        result["topics"] = []
+                        
+                    llm_time = time.time() - llm_start
+                    result["processing_times"]["llm"] = llm_time
+                except Exception as e:
+                    print(f"Error in LLM processing: {e}")
+                    result["processing_times"]["llm"] = 0
             
             # Calculate total processing time
             total_time = time.time() - start_time
@@ -571,75 +627,27 @@ class AudioProcessingPipeline:
         chunks = transcription.get("chunks", [])
         if not chunks:
             return []
-            
-        # Convert diarization segments to a format easier to search
-        diar_segments = []
-        for segment in diarization_segments:
-            diar_segments.append({
-                "start": segment["start"],
-                "end": segment["end"],
-                "speaker": segment["speaker"]
-            })
-            
-        # Merge chunks with speaker information
-        merged_segments = []
+        
+        # Create transcript segments from Whisper output
+        transcript_segments = []
         for chunk in chunks:
             if "timestamp" not in chunk:
                 continue
                 
-            # Extract start and end times
-            start_time = chunk["timestamp"][0]
-            end_time = chunk["timestamp"][1]
-            text = chunk.get("text", "").strip()
-            
-            if not text:
-                continue
-                
-            # Find the speaker for this chunk
-            speaker = self._find_speaker_for_chunk(start_time, end_time, diar_segments)
-            
-            # Add merged segment
-            merged_segments.append({
-                "start": start_time,
-                "end": end_time,
-                "speaker": speaker,
-                "text": text
+            transcript_segments.append({
+                "text": chunk["text"],
+                "start": chunk["timestamp"][0],
+                "end": chunk["timestamp"][1]
             })
-            
+        
+        # If no transcript segments were created, return empty list
+        if not transcript_segments:
+            return []
+        
+        # Use the diarizer to merge transcript with speaker information
+        # This leverages the existing logic in the SpeakerDiarizer class
+        merged_segments = self.diarizer.create_transcript_with_speakers(transcript_segments, diarization_segments)
+        
         return merged_segments
     
-    def _find_speaker_for_chunk(self, start_time, end_time, diar_segments):
-        """
-        Find the most likely speaker for a given time chunk.
-        
-        Args:
-            start_time: Start time of the chunk
-            end_time: End time of the chunk
-            diar_segments: Speaker diarization segments
-            
-        Returns:
-            Speaker ID or "UNKNOWN"
-        """
-        # Calculate middle point of the chunk
-        mid_time = (start_time + end_time) / 2
-        
-        # Find segment that contains the middle point
-        for segment in diar_segments:
-            if segment["start"] <= mid_time <= segment["end"]:
-                return segment["speaker"]
-                
-        # If no exact match, find segment with most overlap
-        max_overlap = 0
-        best_speaker = "UNKNOWN"
-        
-        for segment in diar_segments:
-            # Calculate overlap
-            overlap_start = max(start_time, segment["start"])
-            overlap_end = min(end_time, segment["end"])
-            overlap = max(0, overlap_end - overlap_start)
-            
-            if overlap > max_overlap:
-                max_overlap = overlap
-                best_speaker = segment["speaker"]
-                
-        return best_speaker
+    # The _find_speaker_for_chunk method has been removed as we now use the diarizer's create_transcript_with_speakers method

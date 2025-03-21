@@ -46,7 +46,8 @@ class SpeakerDiarizer:
         segmentation_model: str = "pyannote/segmentation-3.0",
         embedding_model: str = "3dspeaker_speech_eres2net_sv_en_voxceleb_16k.onnx|25.3MB",
         num_speakers: int = 2,
-        threshold: float = 0.5
+        threshold: float = 0.5,
+        use_gpu: bool = True
     ):
         """Initialize diarizer
         
@@ -60,6 +61,7 @@ class SpeakerDiarizer:
         self.embedding_model = embedding_model
         self.num_speakers = num_speakers
         self.threshold = threshold
+        self.use_gpu = use_gpu
         self.diarizer = None
         
     def _ensure_diarizer(self):
@@ -69,7 +71,8 @@ class SpeakerDiarizer:
                 segmentation_model=self.segmentation_model,
                 embedding_model=self.embedding_model,
                 num_clusters=self.num_speakers,
-                threshold=self.threshold
+                threshold=self.threshold,
+                use_gpu=self.use_gpu
             )
     
     def process_file(self, audio_path: str) -> List[DiarizationSegment]:
