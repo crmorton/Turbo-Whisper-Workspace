@@ -314,8 +314,10 @@ def plot_speaker_diarization(segments, duration, title="Speaker Diarization", fi
     ax.set_xlim(0, duration)
     ax.set_title(title, color=CYBERPUNK_COLORS[0], fontsize=14)
     
-    # Add legend
-    ax.legend(loc='upper right', facecolor='#111111', edgecolor='#333333', framealpha=0.9)
+    # Add legend only if there are speakers with valid labels
+    handles, labels = ax.get_legend_handles_labels()
+    if handles and labels:
+        ax.legend(loc='upper right', facecolor='#111111', edgecolor='#333333', framealpha=0.9)
     
     # Add some styling
     fig.patch.set_facecolor('#111111')

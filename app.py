@@ -734,16 +734,24 @@ with gr.Blocks(theme=cyberpunk_theme, css="""
     # Function to generate chat bubbles from segments
     def process_chat(audio, task, segmentation_model, embedding_model, num_speakers, threshold, llm_model=None):
         # Set the LLM model if provided
-        if LLM_AVAILABLE and llm_model and llm_model in AVAILABLE_LLM_MODELS:
-            llm_helper.set_current_model(llm_model)
+        if LLM_AVAILABLE and llm_model is not None:
+            try:
+                if isinstance(llm_model, str) and llm_model in AVAILABLE_LLM_MODELS:
+                    print(f"Setting LLM model to: {llm_model}")
+                    llm_helper.set_current_model(llm_model)
+            except Exception as e:
+                print(f"Error setting LLM model: {e}")
+                
+        # Initialize default values
+        chat_html = "<div class='chat-container'>Processing audio...</div>"
+        audio_path = None
+        summary_markdown = ""
+        status_msg = "*Processing audio...*"
+        
         try:
-            # Update status
-            yield "<div class='chat-container'>Processing audio...</div>", None, "", "*Processing audio...*"
-            
             # Check if audio is provided
             if audio is None:
-                yield "<div class='chat-container'>Please upload an audio file.</div>", None, "", "*Please upload an audio file.*"
-                return
+                return "<div class='chat-container'>Please upload an audio file.</div>", None, "", "*Please upload an audio file.*"
                 
             # Process audio file
             audio_path = audio
@@ -760,8 +768,7 @@ with gr.Blocks(theme=cyberpunk_theme, css="""
             print(f"Result keys: {result.keys()}")
             
             if isinstance(result, dict) and "error" in result:
-                yield f"<div class='chat-container'>Error: {result['error']}</div>", None, "", f"*Error: {result['error']}*"
-                return
+                return f"<div class='chat-container'>Error: {result['error']}</div>", None, "", f"*Error: {result['error']}*"
                 
             if "segments" in result:
                 segments = result["segments"]
@@ -880,19 +887,19 @@ with gr.Blocks(theme=cyberpunk_theme, css="""
                 """
                 
                 # Return chat HTML, audio for playback, summary, and status
-                yield chat_html, audio_path, summary_markdown, f"*Processing completed successfully! Identified {num_speakers} speakers.*"
-                return
+                return chat_html, audio_path, summary_markdown, f"*Processing completed successfully! Identified {num_speakers} speakers.*"
             else:
-                yield "<div class='chat-container'>No conversation segments found</div>", None, "", "*Processing completed, but no conversation segments were found.*"
-                return
+                return "<div class='chat-container'>No conversation segments found</div>", None, "", "*Processing completed, but no conversation segments were found.*"
                 
         except Exception as e:
             print(f"Error in process_chat: {e}")
-            yield None, None, "", f"*Error: {str(e)}*"
-            return
+            import traceback
+            traceback.print_exc()
+            return "<div class='chat-container'>Error processing audio</div>", None, "", f"*Error: {str(e)}*"
     
-    # Connect the chat process button
+    # Connect the chat process button directly
     if LLM_AVAILABLE and AVAILABLE_LLM_MODELS:
+        # With LLM model
         btn_process.click(
             fn=process_chat,
             inputs=[
@@ -902,7 +909,7 @@ with gr.Blocks(theme=cyberpunk_theme, css="""
                 embedding_model,
                 num_speakers,
                 threshold,
-                llm_model  # Add LLM model selection
+                llm_model
             ],
             outputs=[
                 chat_container,   # Chat bubbles container
@@ -912,8 +919,9 @@ with gr.Blocks(theme=cyberpunk_theme, css="""
             ]
         )
     else:
+        # Without LLM model
         btn_process.click(
-            fn=process_chat,
+            fn=lambda a, t, s, e, n, th: process_chat(a, t, s, e, n, th, None),
             inputs=[
                 audio_input,
                 task,

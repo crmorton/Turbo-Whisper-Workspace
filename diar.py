@@ -179,6 +179,19 @@ class SpeakerDiarizer:
         """
         result = []
         
+        # If no diarization segments, assign alternating speakers
+        if not diarization_segments:
+            print("No speaker segments found. Assigning alternating speakers.")
+            for i, seg in enumerate(transcript_segments):
+                result.append({
+                    'speaker': f"Speaker {i % 2}",  # Alternate between Speaker 0 and Speaker 1
+                    'text': seg['text'],
+                    'start': seg['start'],
+                    'end': seg['end']
+                })
+            return result
+        
+        # Normal processing with diarization segments
         for seg in transcript_segments:
             start_time = seg['start']
             end_time = seg['end']
@@ -197,6 +210,10 @@ class SpeakerDiarizer:
                 if overlap > max_overlap:
                     max_overlap = overlap
                     speaker = f"Speaker {diar_seg.speaker_id}"
+            
+            # If no overlap found, assign based on segment index
+            if max_overlap == 0:
+                speaker = f"Speaker {len(result) % 2}"
             
             # Create result segment
             result.append({
