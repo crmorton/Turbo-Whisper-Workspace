@@ -301,7 +301,7 @@ Example: ["Project timeline", "Budget concerns", "Marketing strategy"]
 # Fallback methods that don't require LLM
 def identify_speaker_names_fallback(segments: List[Dict[str, Any]]) -> Dict[str, str]:
     """Fallback method for speaker name identification without LLM"""
-    from app import COMMON_NAMES
+    from common_data import COMMON_NAMES
     
     # Dictionary to store detected names for each speaker ID
     detected_names = {}

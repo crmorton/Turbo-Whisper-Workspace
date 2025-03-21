@@ -35,21 +35,6 @@ import librosa
 import soundfile as sf
 import numpy as np
 
-# Check for GPU availability at startup
-if torch.cuda.is_available():
-    gpu_name = torch.cuda.get_device_name(0)
-    gpu_count = torch.cuda.device_count()
-    total_memory_mb = torch.cuda.get_device_properties(0).total_memory / (1024 * 1024)
-    print("\n" + "="*80)
-    print(f"🚀 GPU DETECTED: {gpu_name} 🚀")
-    print(f"Total GPU Memory: {total_memory_mb:.0f} MB")
-    print(f"CUDA Version: {torch.version.cuda}")
-    print("="*80 + "\n")
-else:
-    print("\n" + "="*80)
-    print("⚠️ NO GPU DETECTED - RUNNING ON CPU ⚠️")
-    print("Processing will be significantly slower without GPU acceleration.")
-    print("="*80 + "\n")
 
 # Import LLM helper module
 try:
@@ -61,31 +46,8 @@ except ImportError:
     LLM_AVAILABLE = False
     AVAILABLE_LLM_MODELS = []
 
-# Common name patterns for speaker recognition
-COMMON_NAMES = [
-    "Alex", "Alexandra", "Alexa", "Alexander", "Alice", "Alicia", "Amy", "Anna", "Anne", "Andrew", "Andy",
-    "Bob", "Bobby", "Barbara", "Ben", "Benjamin", "Bill", "Billy", "Brian", "Bruce", 
-    "Carl", "Carlos", "Carol", "Caroline", "Catherine", "Charlie", "Charlotte", "Chris", "Christine", "Christopher", "Cindy", "Claire",
-    "Dan", "Daniel", "Dave", "David", "Debbie", "Deborah", "Diana", "Don", "Donald", "Donna", "Dorothy", "Doug", "Douglas",
-    "Ed", "Edward", "Elizabeth", "Emily", "Emma", "Eric", "Eva", "Evelyn",
-    "Frank", "Fred", "Frederick",
-    "Gary", "George", "Grace", "Greg", "Gregory",
-    "Harold", "Harry", "Heather", "Helen", "Henry", "Holly", "Howard",
-    "Ian", "Irene", "Isaac", "Ivan",
-    "Jack", "Jacob", "Jake", "James", "Jamie", "Jane", "Janet", "Jason", "Jean", "Jeff", "Jeffrey", "Jennifer", "Jenny", "Jeremy", "Jessica", "Jim", "Jimmy", "Joan", "Joe", "John", "Johnny", "Jonathan", "Joseph", "Josh", "Joshua", "Julia", "Julie", "Justin",
-    "Karen", "Kate", "Katherine", "Kathleen", "Kathryn", "Kathy", "Katie", "Keith", "Kelly", "Ken", "Kenneth", "Kevin", "Kim", "Kimberly", "Kyle",
-    "Larry", "Laura", "Lauren", "Lawrence", "Lee", "Leonard", "Leslie", "Linda", "Lisa", "Liz", "Louis", "Louise", "Lucy", "Lynn",
-    "Maggie", "Marc", "Margaret", "Maria", "Mark", "Martha", "Martin", "Mary", "Matt", "Matthew", "Melissa", "Michael", "Michelle", "Mike", "Molly",
-    "Nancy", "Natalie", "Nathan", "Neil", "Nicholas", "Nick", "Nicole", "Nina", "Noah", "Nora",
-    "Olivia", "Oscar", "Owen",
-    "Pam", "Pamela", "Patricia", "Patrick", "Paul", "Paula", "Peggy", "Peter", "Philip", "Phillip", "Phyllis",
-    "Rachel", "Ralph", "Randy", "Raymond", "Rebecca", "Richard", "Rick", "Robert", "Robin", "Roger", "Ron", "Ronald", "Rose", "Roy", "Russell", "Ruth", "Ryan",
-    "Sam", "Samantha", "Samuel", "Sandra", "Sandy", "Sara", "Sarah", "Scott", "Sean", "Sharon", "Sheila", "Shirley", "Sophia", "Spencer", "Stephanie", "Stephen", "Steve", "Steven", "Stuart", "Sue", "Susan", "Suzanne",
-    "Tammy", "Ted", "Teresa", "Terry", "Thomas", "Tim", "Timothy", "Tina", "Todd", "Tom", "Tommy", "Tony", "Tracy",
-    "Valerie", "Vanessa", "Vicky", "Victor", "Victoria", "Vincent", "Virginia",
-    "Walter", "Wendy", "William", "Willy", "Winston",
-    "Zachary", "Zoe"
-]
+# Import common data structures
+from common_data import COMMON_NAMES
 
 
 # Import from local modules
@@ -102,498 +64,100 @@ from diar import SpeakerDiarizer, format_as_conversation
 # Load environment variables
 load_dotenv()
 
-# Cache for initialized components
-_CACHE = {
-    'gpu_setup_done': False,
-    'whisper_model': None
-}
+# Import the AudioProcessingPipeline
+from audio_pipeline import AudioProcessingPipeline
 
-# Set up GPU settings and memory management
-def setup_gpu():
-    """Configure GPU settings and optimize memory usage for RTX 4090"""
-    # Check if GPU setup has already been done
-    if _CACHE['gpu_setup_done']:
-        return True
-        
-    if torch.cuda.is_available():
-        # Enable cuDNN benchmark mode for optimal performance
-        torch.backends.cudnn.benchmark = True
-        torch.backends.cudnn.enabled = True
-        
-        # Enable TF32 precision on Ampere GPUs (like RTX 3090/4090)
-        # This gives better performance with minimal precision loss
-        torch.backends.cuda.matmul.allow_tf32 = True
-        torch.backends.cudnn.allow_tf32 = True
-        
-        # Set memory strategy
-        torch.cuda.empty_cache()
-        
-        # Print detailed GPU info
-        gpu_name = torch.cuda.get_device_name(0)
-        gpu_count = torch.cuda.device_count()
-        
-        # Get GPU memory information
-        total_memory_mb = torch.cuda.get_device_properties(0).total_memory / (1024 * 1024)
-        
-        print(f"🚀 GPU ACCELERATION ENABLED 🚀")
-        print(f"GPU Device: {gpu_name}")
-        print(f"Number of GPUs: {gpu_count}")
-        print(f"Total GPU Memory: {total_memory_mb:.0f} MB")
-        print(f"CUDA Version: {torch.version.cuda}")
-        print(f"PyTorch CUDA: {torch.version.cuda}")
-        print(f"cuDNN Version: {torch.backends.cudnn.version() if hasattr(torch.backends.cudnn, 'version') else 'Unknown'}")
-        print(f"TF32 Enabled: {torch.backends.cuda.matmul.allow_tf32}")
-        
-        # Mark GPU setup as done
-        _CACHE['gpu_setup_done'] = True
-        
-        return True
-    else:
-        print("⚠️ GPU NOT AVAILABLE - USING CPU ⚠️")
-        print("Processing will be significantly slower without GPU acceleration.")
-        print(f"PyTorch version: {torch.__version__}")
-        return False
+# Dictionary to store session-specific pipelines
+_SESSION_PIPELINES = {}
 
-def clear_gpu_memory():
-    """Free up GPU memory after processing"""
-    if torch.cuda.is_available():
-        torch.cuda.empty_cache()
-        torch.cuda.ipc_collect()
-
-def get_gpu_memory_info():
-    """Get current GPU memory usage information"""
-    if not torch.cuda.is_available():
-        return "GPU not available"
-        
-    try:
-        # Get memory information for the current device
-        device = torch.cuda.current_device()
-        total_memory = torch.cuda.get_device_properties(device).total_memory
-        reserved_memory = torch.cuda.memory_reserved(device)
-        allocated_memory = torch.cuda.memory_allocated(device)
-        free_memory = total_memory - allocated_memory
-        
-        # Convert to MB for readability
-        total_mb = total_memory / (1024 * 1024)
-        reserved_mb = reserved_memory / (1024 * 1024)
-        allocated_mb = allocated_memory / (1024 * 1024)
-        free_mb = free_memory / (1024 * 1024)
-        
-        return {
-            "total_mb": f"{total_mb:.2f} MB",
-            "reserved_mb": f"{reserved_mb:.2f} MB",
-            "allocated_mb": f"{allocated_mb:.2f} MB",
-            "free_mb": f"{free_mb:.2f} MB",
-            "utilization_percent": f"{(allocated_memory / total_memory) * 100:.2f}%"
-        }
-    except Exception as e:
-        return f"Error getting GPU memory info: {str(e)}"
-
-def check_gpu_efficiency():
-    """Check if GPU is being used efficiently and provide recommendations"""
-    if not torch.cuda.is_available():
-        return "GPU not available - running on CPU"
+# Function to get or create a pipeline for a session
+def get_pipeline_for_session(session_id=None):
+    """Get or create an AudioProcessingPipeline for the current session"""
+    global _SESSION_PIPELINES
     
-    try:
-        # Get GPU properties
-        device = torch.cuda.current_device()
-        props = torch.cuda.get_device_properties(device)
+    # Use default session ID if none provided
+    if session_id is None:
+        session_id = "default"
         
-        # Check CUDA version
-        cuda_version = torch.version.cuda
-        major_version = int(cuda_version.split('.')[0]) if cuda_version else 0
+    # Create a new pipeline if one doesn't exist for this session
+    if session_id not in _SESSION_PIPELINES:
+        print(f"Creating new AudioProcessingPipeline for session {session_id}")
+        _SESSION_PIPELINES[session_id] = AudioProcessingPipeline()
         
-        # Get memory information
-        total_memory = props.total_memory / (1024 * 1024)  # MB
-        allocated_memory = torch.cuda.memory_allocated(device) / (1024 * 1024)  # MB
-        utilization = (allocated_memory / total_memory) * 100
-        
-        recommendations = []
-        
-        # Check if using a modern GPU
-        if props.major < 7:
-            recommendations.append("⚠️ Using an older GPU architecture. Consider upgrading to an RTX series GPU for better performance.")
-        
-        # Check CUDA version
-        if major_version < 11:
-            recommendations.append("⚠️ Using an older CUDA version. Consider upgrading to CUDA 11.x or newer for better performance.")
-        
-        # Check memory utilization
-        if utilization < 30:
-            recommendations.append("⚠️ Low GPU memory utilization. Consider increasing batch size or model size to utilize GPU more efficiently.")
-        elif utilization > 95:
-            recommendations.append("⚠️ Very high GPU memory utilization. Consider reducing batch size to avoid out-of-memory errors.")
-        
-        # Check if using mixed precision
-        if not torch.cuda.is_bf16_supported() and not torch.cuda.is_fp16_supported():
-            recommendations.append("⚠️ GPU does not support efficient mixed precision. Performance may be limited.")
-        
-        # Return results
-        result = {
-            "gpu_name": props.name,
-            "compute_capability": f"{props.major}.{props.minor}",
-            "cuda_version": cuda_version,
-            "memory_utilization": f"{utilization:.2f}%",
-            "recommendations": recommendations
-        }
-        
-        return result
-    except Exception as e:
-        return f"Error checking GPU efficiency: {str(e)}"
-
-# Load Whisper Model with optimizations for RTX 4090
-def load_whisper_model(device="cuda:0" if torch.cuda.is_available() else "cpu"):
-    """Load and optimize the Whisper model for maximum performance on RTX 4090"""
-    # Check if model is already loaded
-    if _CACHE['whisper_model'] is not None:
-        return _CACHE['whisper_model']
-        
-    try:
-        # Import the required modules directly
-        import transformers
-        from transformers import AutoModelForSpeechSeq2Seq, AutoProcessor
-        
-        # Check if pipeline is available in transformers
-        if not hasattr(transformers, 'pipeline'):
-            print("Warning: transformers.pipeline not found, using alternative approach")
-            
-            # Alternative approach without pipeline - direct model usage
-            try:
-                print("Loading Whisper model directly without pipeline...")
-                model_id = "openai/whisper-large-v3-turbo"
-                
-                # Load model with eager attention
-                model = AutoModelForSpeechSeq2Seq.from_pretrained(
-                    model_id,
-                    torch_dtype=torch.float16,
-                    use_safetensors=True,
-                    attn_implementation="eager",
-                    use_cache=True
-                )
-                model.to(device)
-                
-                # Load processor
-                processor = AutoProcessor.from_pretrained(model_id)
-                
-                # Create a simple wrapper class that mimics the pipeline interface
-                class WhisperWrapper:
-                    def __init__(self, model, processor):
-                        self.model = model
-                        self.processor = processor
-                        
-                    def __call__(self, audio_path, **kwargs):
-                        try:
-                            # Load audio
-                            with open(audio_path, "rb") as f:
-                                audio_data = f.read()
-                                
-                            # Process audio
-                            input_features = self.processor(audio_data, sampling_rate=16000, return_tensors="pt").input_features
-                            input_features = input_features.to(device)
-                            
-                            # Generate tokens
-                            predicted_ids = self.model.generate(input_features)
-                            
-                            # Decode tokens
-                            transcription = self.processor.batch_decode(predicted_ids, skip_special_tokens=True)[0]
-                            
-                            return {"text": transcription}
-                        except Exception as e:
-                            print(f"Error in WhisperWrapper: {e}")
-                            return {"text": f"Error: {str(e)}"}
-                
-                wrapper = WhisperWrapper(model, processor)
-                print("Successfully created Whisper wrapper")
-                
-                # Cache the wrapper
-                _CACHE['whisper_model'] = wrapper
-                
-                return wrapper
-            except Exception as e:
-                print(f"Error creating Whisper wrapper: {e}")
-                return None
-            
-        # If pipeline is available, import it
-        from transformers import pipeline
-        
-        # Use eager implementation directly since flash_attention causes issues
-        print("Loading Whisper with eager implementation...")
-        model_id = "openai/whisper-large-v3-turbo"
-        
-        # Load model with eager attention
-        try:
-            # Try to load with full optimization but using eager attention
-            model = AutoModelForSpeechSeq2Seq.from_pretrained(
-                model_id,
-                torch_dtype=torch.float16,
-                use_safetensors=True,
-                attn_implementation="eager",  # Use eager instead of flash_attention_2
-                use_cache=True
-            )
-            model.to(device)
-            
-            # Load processor
-            processor = AutoProcessor.from_pretrained(model_id)
-            
-            # Create pipeline with optimized model
-            pipe = pipeline(
-                "automatic-speech-recognition",
-                model=model,
-                tokenizer=processor.tokenizer,
-                feature_extractor=processor.feature_extractor,
-                max_new_tokens=128,
-                torch_dtype=torch.float16,
-                device=device,
-            )
-            print("Successfully loaded Whisper with eager implementation and full optimization")
-            
-            # Cache the model
-            _CACHE['whisper_model'] = pipe
-            
-            return pipe
-            
-        except Exception as model_err:
-            print(f"Optimized model loading failed: {model_err}, falling back to simple pipeline")
-            
-            # Fallback to simpler pipeline implementation
-            pipe = pipeline(
-                "automatic-speech-recognition",
-                model="openai/whisper-large-v3-turbo",
-                torch_dtype=torch.float16 if torch.cuda.is_available() else torch.float32,
-                device=device,
-                model_kwargs={
-                    "attn_implementation": "eager",  # Ensure eager implementation
-                    "use_cache": True
-                },
-            )
-            print("Successfully loaded Whisper with simple pipeline")
-            
-            # Cache the model
-            _CACHE['whisper_model'] = pipe
-            
-            return pipe
-    except Exception as e:
-        print(f"Error loading Whisper model: {e}")
-        return None
-
-# Transcription function with GPU optimization
-def transcribe_audio(audio_path, task="transcribe", return_timestamps=False):
-    """Transcribe audio using Whisper model"""
-    try:
-        # Create temporary directory for processing
-        with tempfile.TemporaryDirectory() as temp_dir:
-            # Ensure GPU is set up before loading model
-            gpu_available = setup_gpu()
-            if gpu_available:
-                print("Using GPU for transcription")
-            else:
-                print("WARNING: Using CPU for transcription (much slower)")
-                
-            # Load model with appropriate device
-            pipe = load_whisper_model(device="cuda:0" if gpu_available else "cpu")
-            if not pipe:
-                return {"error": "Failed to load transcription model"}
-            
-            # Prepare generate kwargs based on task
-            generate_kwargs = {"task": task}
-            
-            # Log GPU memory before transcription if available
-            if gpu_available:
-                print("GPU memory before transcription:")
-                print(get_gpu_memory_info())
-                
-            # Run transcription with parameters optimized for RTX 4090
-            outputs = pipe(
-                audio_path,
-                chunk_length_s=60,  # Doubled chunk size for faster processing
-                batch_size=512 if gpu_available else 32,  # Increased batch size for RTX 4090
-                stride_length_s=5,  # Increased stride for faster processing
-                generate_kwargs=generate_kwargs,
-                return_timestamps=return_timestamps
-            )
-            
-            # Log GPU memory after transcription if available
-            if gpu_available:
-                print("GPU memory after transcription (before cleanup):")
-                print(get_gpu_memory_info())
-            
-            # Clear GPU memory
-            clear_gpu_memory()
-            
-            # Log GPU memory after cleanup if available
-            if gpu_available:
-                print("GPU memory after cleanup:")
-                print(get_gpu_memory_info())
-            
-            return outputs
-    except Exception as e:
-        return {"error": f"Transcription error: {str(e)}"}
-
-# Speaker diarization function
-def perform_diarization(audio_path, segmentation_model, embedding_model, num_speakers=2, threshold=0.5):
-    """Perform speaker diarization on audio file"""
-    try:
-        # Create diarization model using our improved SpeakerDiarizer class
-        diarizer = SpeakerDiarizer(
-            segmentation_model=segmentation_model,
-            embedding_model=embedding_model,
-            num_speakers=num_speakers,
-            threshold=threshold
-        )
-        
-        # Estimate number of speakers if set to auto
-        if num_speakers == 0:
-            gr.Info("Estimating number of speakers...")
-            num_speakers = diarizer.estimate_num_speakers(audio_path)
-            gr.Info(f"Estimated number of speakers: {num_speakers}")
-            diarizer.num_speakers = num_speakers
-        
-        # Process audio file
-        segments = diarizer.process_file(audio_path)
-        
-        # Convert segments to dictionary format
-        speakers = [segment.to_dict() for segment in segments]
-        
-        return speakers
-    except Exception as e:
-        import traceback
-        traceback.print_exc()
-        return {"error": f"Diarization error: {str(e)}"}
+    return _SESSION_PIPELINES[session_id]
 
 # Combined transcription and diarization
 def process_audio_with_diarization(audio_path, task, segmentation_model, embedding_model,
-                                   num_speakers=2, threshold=0.5, return_timestamps=True):
-    """Process audio with both transcription and speaker diarization optimized for RTX 4090"""
+                                   num_speakers=2, threshold=0.5, return_timestamps=True, session_id=None):
+    """Process audio with both transcription and speaker diarization using the pipeline"""
     try:
-        # Configure GPU for optimal performance
-        gpu_available = setup_gpu()
-        if gpu_available:
-            print("GPU setup successful, using CUDA for processing")
-            # Log initial GPU memory state
-            print("Initial GPU memory state:")
-            print(get_gpu_memory_info())
-        else:
-            print("WARNING: GPU not available, falling back to CPU (this will be much slower)")
+        # Get pipeline for this session
+        pipeline = get_pipeline_for_session(session_id)
+        print(f"Using pipeline for session: {session_id or 'default'}")
         
-        # Track start time for performance metrics
-        start_time = time.time()
-        
-        # Pre-load audio to avoid multiple file reads
-        y, sr = librosa.load(audio_path, sr=None)
-        duration = librosa.get_duration(y=y, sr=sr)
-        
-        # Create SpeakerDiarizer instance early to allow parallel initialization
-        diarizer = SpeakerDiarizer(
+        # Process audio using the pipeline
+        pipeline_result = pipeline.process_audio(
+            audio_path=audio_path,
+            task=task,
             segmentation_model=segmentation_model,
             embedding_model=embedding_model,
             num_speakers=num_speakers,
             threshold=threshold
         )
         
-        # Estimate number of speakers if set to auto
-        if num_speakers == 0:
-            gr.Info("Estimating number of speakers...")
-            estimated_speakers = diarizer.estimate_num_speakers(audio_path)
-            gr.Info(f"Estimated number of speakers: {estimated_speakers}")
-            diarizer.num_speakers = estimated_speakers
-        # Get transcription with timestamps
-        transcription = transcribe_audio(audio_path, task, return_timestamps=True)
-        transcription_time = time.time() - start_time
-        
-        # Log GPU memory state after transcription
-        if gpu_available:
-            print("GPU memory state after transcription:")
-            print(get_gpu_memory_info())
-        
-        # Process audio file for diarization
-        # Process audio file for diarization
-        diarization_start = time.time()
-        segments = diarizer.process_file(audio_path)
-        diarization_time = time.time() - diarization_start
-        
-        # Log GPU memory state after diarization
-        if gpu_available:
-            print("GPU memory state after diarization:")
-            print(get_gpu_memory_info())
-        
-        # Duration was already calculated above
-        
-        # If there was an error in transcription
-        if isinstance(transcription, dict) and "error" in transcription:
-            return transcription
-        
-        # Convert diarization segments to dictionary format
-        speaker_segments = [segment.to_dict() for segment in segments]
-        
-        # Create transcript segments from Whisper output
-        transcript_segments = []
-        if "chunks" in transcription:
-            for chunk in transcription["chunks"]:
-                transcript_segments.append({
-                    "text": chunk["text"],
-                    "start": chunk["timestamp"][0],
-                    "end": chunk["timestamp"][1]
-                })
-        else:
-            # If no timestamps, create a single segment
-            transcript_segments.append({
-                "text": transcription["text"] if "text" in transcription else str(transcription),
-                "start": 0,
-                "end": duration
-            })
+        # Check for errors in pipeline result
+        if "error" in pipeline_result:
+            return pipeline_result
             
-        # Merge transcript with speaker information
-        result = diarizer.create_transcript_with_speakers(transcript_segments, segments)
+        # Extract data from pipeline result
+        segments = pipeline_result.get("segments", [])
+        merged_segments = pipeline_result.get("merged_segments", [])
+        duration = pipeline_result.get("duration", 0)
+        processing_times = pipeline_result.get("processing_times", {})
+        
+        # Convert to speaker segments format for plotting
+        speaker_segments = []
+        for segment in segments:
+            speaker_segments.append({
+                "start": segment["start"],
+                "end": segment["end"],
+                "speaker": segment["speaker"]
+            })
         
         # Format as conversation
-        conversation = format_as_conversation(result)
+        conversation = format_as_conversation(merged_segments)
         
         # Create speaker diarization plot
         diarization_plot = plot_speaker_diarization(speaker_segments, duration)
         
-        # Calculate total processing time
-        total_time = time.time() - start_time
-        
         # Prepare enhanced output with additional information
         output_json = {
-            "text": transcription["text"] if "text" in transcription else "",
-            "segments": result,
+            "text": pipeline_result.get("text", ""),
+            "segments": merged_segments,
             "conversation": conversation,
             "diarization_plot": diarization_plot,
             "performance": {
-                "transcription_time": f"{transcription_time:.2f}s",
-                "diarization_time": f"{diarization_time:.2f}s",
-                "total_time": f"{total_time:.2f}s",
+                "transcription_time": f"{processing_times.get('transcription', 0):.2f}s",
+                "diarization_time": f"{processing_times.get('diarization', 0):.2f}s",
+                "total_time": f"{processing_times.get('total', 0):.2f}s",
                 "audio_duration": f"{duration:.2f}s",
-                "realtime_factor": f"{total_time/duration:.2f}x"
+                "realtime_factor": f"{processing_times.get('total', 0)/duration:.2f}x" if duration > 0 else "N/A"
             }
         }
         
-        # Add speaker names if LLM is available
-        if LLM_AVAILABLE:
-            try:
-                # Identify speaker names
-                speaker_names = llm_helper.identify_speaker_names_llm(result)
-                if speaker_names and any(speaker_names.values()):
-                    output_json["speaker_names"] = speaker_names
-                    print(f"Identified speaker names: {speaker_names}")
-                
-                # Generate summary
-                summary = llm_helper.summarize_conversation(result)
-                if summary:
-                    output_json["summary"] = summary
-                    print(f"Generated summary: {summary}")
-                
-                # Extract topics
-                topics = llm_helper.extract_topics(result)
-                if topics:
-                    output_json["topics"] = topics
-                    print(f"Extracted topics: {topics}")
-            except Exception as e:
-                print(f"Error generating LLM content: {e}")
+        # Add LLM-generated content if available
+        if "speaker_names" in pipeline_result:
+            output_json["speaker_names"] = pipeline_result["speaker_names"]
+            
+        if "summary" in pipeline_result:
+            output_json["summary"] = pipeline_result["summary"]
+            
+        if "topics" in pipeline_result:
+            output_json["topics"] = pipeline_result["topics"]
         
         # Return the enhanced result as JSON
         return output_json
+        
     except Exception as e:
         import traceback
         traceback.print_exc()
@@ -935,28 +499,30 @@ with gr.Blocks(theme=cyberpunk_theme, css="""
     )
     
     # Define the processing function
-    def process_audio(audio, task, segmentation_model, embedding_model, num_speakers, threshold):
+    def process_audio(audio, task, segmentation_model, embedding_model, num_speakers, threshold, session_id=None):
         if not audio:
-            return ("Upload an audio file to begin.", 
-                   "*Error: No audio file provided*", 
+            return ("Upload an audio file to begin.",
+                   "*Error: No audio file provided*",
                    None)
         
         try:
             # Process audio
             yield (
-                "Processing audio...", 
+                "Processing audio...",
                 "*Starting transcription and diarization...*",
                 None
             )
             
-            # Process with transcription and diarization
+            # Process with transcription and diarization using session-specific pipeline
             result = process_audio_with_diarization(
-                audio, 
-                task, 
-                segmentation_model, 
-                embedding_model, 
+                audio,
+                task,
+                segmentation_model,
+                embedding_model,
                 num_speakers,
-                threshold
+                threshold,
+                return_timestamps=True,
+                session_id=session_id
             )
             
             # Check for errors
@@ -993,18 +559,18 @@ with gr.Blocks(theme=cyberpunk_theme, css="""
     
     # Connect the process button
     btn_process.click(
-        fn=process_audio,
+        fn=lambda a, t, s, e, n, th: process_audio(a, t, s, e, n, th, session_id=str(uuid.uuid4())),
         inputs=[
-            audio_input, 
-            task, 
-            segmentation_model, 
-            embedding_model, 
-            num_speakers, 
+            audio_input,
+            task,
+            segmentation_model,
+            embedding_model,
+            num_speakers,
             threshold
         ],
         outputs=[
-            output_raw, 
-            status, 
+            output_raw,
+            status,
             output_json
         ],
         show_progress=True
@@ -1080,7 +646,7 @@ with gr.Blocks(theme=cyberpunk_theme, css="""
         return detected_names
 
     # Function to generate chat bubbles from segments
-    def process_chat(audio, task, segmentation_model, embedding_model, num_speakers, threshold, llm_model=None):
+    def process_chat(audio, task, segmentation_model, embedding_model, num_speakers, threshold, llm_model=None, session_id=None):
         # Set the LLM model if provided
         if LLM_AVAILABLE and llm_model is not None:
             try:
@@ -1101,15 +667,20 @@ with gr.Blocks(theme=cyberpunk_theme, css="""
             if audio is None:
                 return "<div class='chat-container'>Please upload an audio file.</div>", None, "", "*Please upload an audio file.*"
                 
-            # Process audio file
+            # Set audio path
             audio_path = audio
+            
+            # Process audio file using session-specific pipeline
+            # This handles transcription and diarization
             result = process_audio_with_diarization(
-                audio_path, 
-                task, 
-                segmentation_model, 
-                embedding_model, 
-                num_speakers, 
-                threshold
+                audio_path,
+                task,
+                segmentation_model,
+                embedding_model,
+                num_speakers,
+                threshold,
+                return_timestamps=True,
+                session_id=session_id
             )
             
             # Generate chat HTML with debug info
@@ -1122,9 +693,9 @@ with gr.Blocks(theme=cyberpunk_theme, css="""
                 segments = result["segments"]
                 print(f"Found {len(segments)} segments")
                 
-                # Try to identify real speaker names
-                speaker_names = identify_speaker_names(segments)
-                print(f"Identified speaker names: {speaker_names}")
+                # Use speaker_names from process_audio_with_diarization if available, otherwise use empty dict
+                speaker_names = result.get("speaker_names", {})
+                # print(f"Using speaker names from diarization: {speaker_names}")
                 
                 chat_html = "<div class='chat-container'>"
                 
@@ -1176,8 +747,9 @@ with gr.Blocks(theme=cyberpunk_theme, css="""
                 summary_markdown = ""
                 if LLM_AVAILABLE:
                     try:
-                        summary = llm_helper.summarize_conversation(segments)
-                        topics = llm_helper.extract_topics(segments)
+                        # Use summary and topics from process_audio_with_diarization if available
+                        summary = result.get("summary", "")
+                        topics = result.get("topics", [])
                         
                         # Create summary for the Summary tab
                         if summary:
@@ -1203,9 +775,8 @@ with gr.Blocks(theme=cyberpunk_theme, css="""
                             </div>
                             """
                     except Exception as e:
-                        print(f"Error generating summary: {e}")
-                        summary_markdown = f"*Error generating summary: {e}*"
-                        print(f"Error generating summary: {e}")
+                        #print(f"Error processing summary and topics: {e}")
+                        summary_markdown = f"*Error processing summary: {e}*"
                 
                 chat_html += "</div>"
                 
@@ -1249,7 +820,7 @@ with gr.Blocks(theme=cyberpunk_theme, css="""
     if LLM_AVAILABLE and AVAILABLE_LLM_MODELS:
         # With LLM model
         btn_process.click(
-            fn=process_chat,
+            fn=lambda a, t, s, e, n, th, llm: process_chat(a, t, s, e, n, th, llm, session_id=str(uuid.uuid4())),
             inputs=[
                 audio_input,
                 task,
@@ -1269,7 +840,7 @@ with gr.Blocks(theme=cyberpunk_theme, css="""
     else:
         # Without LLM model
         btn_process.click(
-            fn=lambda a, t, s, e, n, th: process_chat(a, t, s, e, n, th, None),
+            fn=lambda a, t, s, e, n, th: process_chat(a, t, s, e, n, th, None, session_id=str(uuid.uuid4())),
             inputs=[
                 audio_input,
                 task,
@@ -1287,7 +858,7 @@ with gr.Blocks(theme=cyberpunk_theme, css="""
         )
     
     # Audio analysis functions
-    def analyze_audio(audio_path):
+    def analyze_audio(audio_path, session_id=None):
         if not audio_path:
             return None, None, None, None, "*Error: No audio file provided*", None
         
@@ -1297,11 +868,28 @@ with gr.Blocks(theme=cyberpunk_theme, css="""
             
             gr.Info("Loading and analyzing audio file...")
             
-            # Process audio using our utility functions
-            audio, sr = process_audio_file(audio_path)
+            # Get pipeline for this session
+            pipeline = get_pipeline_for_session(session_id)
             
-            # Get comprehensive audio information
+            # Use the pipeline to process the audio
+            # This will handle GPU setup, model loading, etc.
+            pipeline_result = pipeline.process_audio(
+                audio_path=audio_path,
+                task="transcribe",  # Default task
+                segmentation_model="",  # Use default
+                embedding_model="",  # Use default
+                num_speakers=2,  # Default
+                threshold=0.5  # Default
+            )
+            
+            # Extract duration from pipeline result
+            duration = pipeline_result.get("duration", 0)
+            
+            # Get audio information using utility function
             audio_features = get_audio_info(audio_path)
+            
+            # Load audio for visualizations
+            audio, sr = process_audio_file(audio_path)
             
             # Format the information as markdown
             info_text = f"""
@@ -1341,19 +929,15 @@ with gr.Blocks(theme=cyberpunk_theme, css="""
             pitch_track = plot_pitch_track(audio, sr, title="🎵 Pitch Track")
             chromagram = plot_chromagram(audio, sr, title="🎹 Chromagram")
             
-            # Try to get speaker diarization
-            try:
-                gr.Info("Analyzing speakers...")
-                diarizer = SpeakerDiarizer()
-                segments = diarizer.process_file(audio_path)
-                speaker_segments = [segment.to_dict() for segment in segments]
-                
+            # Get speaker segments from pipeline result
+            segments = pipeline_result.get("segments", [])
+            if segments:
                 # Add speaker info to output
                 info_text += "\n\n### 🎤 Speaker Segments\n"
-                for segment in speaker_segments:
+                for segment in segments:
                     info_text += f"\n- **{segment['speaker']}**: {segment['start']:.2f}s - {segment['end']:.2f}s (Duration: {segment['end']-segment['start']:.2f}s)"
-            except Exception as diar_err:
-                info_text += f"\n\n### 🎤 Speaker Analysis\n\n*Speaker diarization unavailable: {str(diar_err)}*"
+            else:
+                info_text += f"\n\n### 🎤 Speaker Analysis\n\n*Speaker diarization unavailable or no speakers detected*"
             
             gr.Info("Analysis completed successfully!")
             yield waveform, spectrogram, pitch_track, chromagram, "*Analysis completed successfully!*", info_text
@@ -1365,7 +949,7 @@ with gr.Blocks(theme=cyberpunk_theme, css="""
     
     # Connect the analyze button
     btn_analyze.click(
-        fn=analyze_audio,
+        fn=lambda a: analyze_audio(a, session_id=str(uuid.uuid4())),
         inputs=[audio_analysis_input],
         outputs=[waveform_plot, spectrogram_plot, pitch_plot, chroma_plot, analysis_status, audio_info],
         show_progress=True
@@ -1374,5 +958,7 @@ with gr.Blocks(theme=cyberpunk_theme, css="""
     # Footer
     gr.Markdown(CREDITS, elem_classes="footer")
 
-# Launch with queue enabled
-demo.queue().launch()
+# Only launch the app when running as main script
+if __name__ == "__main__":
+    # Launch with queue enabled
+    demo.queue().launch()
