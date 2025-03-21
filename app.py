@@ -84,11 +84,25 @@ load_dotenv()
 
 # Set up GPU settings and memory management
 def setup_gpu():
-    """Configure GPU settings and optimize memory usage"""
+    """Configure GPU settings and optimize memory usage for RTX 4090"""
     if torch.cuda.is_available():
+        # Enable cuDNN benchmark mode for optimal performance
         torch.backends.cudnn.benchmark = True
+        torch.backends.cudnn.enabled = True
+        
+        # Enable TF32 precision on Ampere GPUs (like RTX 3090/4090)
+        # This gives better performance with minimal precision loss
+        torch.backends.cuda.matmul.allow_tf32 = True
+        torch.backends.cudnn.allow_tf32 = True
+        
         # Set memory strategy
         torch.cuda.empty_cache()
+        
+        # Print GPU info
+        gpu_name = torch.cuda.get_device_name(0)
+        print(f"Using GPU: {gpu_name}")
+        print(f"CUDA Version: {torch.version.cuda}")
+        
         return True
     return False
 
@@ -98,22 +112,60 @@ def clear_gpu_memory():
         torch.cuda.empty_cache()
         torch.cuda.ipc_collect()
 
-# Load Whisper Model with optimizations
+# Load Whisper Model with optimizations for RTX 4090
 def load_whisper_model(device="cuda:0" if torch.cuda.is_available() else "cpu"):
-    """Load and optimize the Whisper model"""
+    """Load and optimize the Whisper model for maximum performance on RTX 4090"""
     try:
-        from transformers import pipeline
+        from transformers import pipeline, AutoModelForSpeechSeq2Seq, AutoProcessor
         
-        pipe = pipeline(
-            "automatic-speech-recognition",
-            model="openai/whisper-large-v3-turbo",
-            torch_dtype=torch.float16 if torch.cuda.is_available() else torch.float32,
-            device=device,
-            model_kwargs={
-                "attn_implementation": "eager"  # Disabled flash_attention_2 due to installation issues
-            },
-        )
-        return pipe
+        # Use eager implementation directly since flash_attention causes issues
+        print("Loading Whisper with eager implementation...")
+        model_id = "openai/whisper-large-v3-turbo"
+        
+        # Load model with eager attention
+        try:
+            # Try to load with full optimization but using eager attention
+            model = AutoModelForSpeechSeq2Seq.from_pretrained(
+                model_id,
+                torch_dtype=torch.float16,
+                use_safetensors=True,
+                attn_implementation="eager",  # Use eager instead of flash_attention_2
+                use_cache=True
+            )
+            model.to(device)
+            
+            # Load processor
+            processor = AutoProcessor.from_pretrained(model_id)
+            
+            # Create pipeline with optimized model
+            pipe = pipeline(
+                "automatic-speech-recognition",
+                model=model,
+                tokenizer=processor.tokenizer,
+                feature_extractor=processor.feature_extractor,
+                max_new_tokens=128,
+                torch_dtype=torch.float16,
+                device=device,
+            )
+            print("Successfully loaded Whisper with eager implementation and full optimization")
+            return pipe
+            
+        except Exception as model_err:
+            print(f"Optimized model loading failed: {model_err}, falling back to simple pipeline")
+            
+            # Fallback to simpler pipeline implementation
+            pipe = pipeline(
+                "automatic-speech-recognition",
+                model="openai/whisper-large-v3-turbo",
+                torch_dtype=torch.float16 if torch.cuda.is_available() else torch.float32,
+                device=device,
+                model_kwargs={
+                    "attn_implementation": "eager",  # Ensure eager implementation
+                    "use_cache": True
+                },
+            )
+            print("Successfully loaded Whisper with simple pipeline")
+            return pipe
     except Exception as e:
         print(f"Error loading Whisper model: {e}")
         return None
@@ -131,15 +183,14 @@ def transcribe_audio(audio_path, task="transcribe", return_timestamps=False):
             
             # Prepare generate kwargs based on task
             generate_kwargs = {"task": task}
-            
-            # Run transcription with optimized parameters
+            # Run transcription with parameters optimized for RTX 4090
             outputs = pipe(
                 audio_path,
-                chunk_length_s=30,
-                batch_size=256 if torch.cuda.is_available() else 32,
-                stride_length_s=3,
+                chunk_length_s=60,  # Doubled chunk size for faster processing
+                batch_size=512 if torch.cuda.is_available() else 32,  # Increased batch size for RTX 4090
+                stride_length_s=5,  # Increased stride for faster processing
                 generate_kwargs=generate_kwargs,
-                return_timestamps=return_timestamps,
+                return_timestamps=return_timestamps
             )
             
             # Clear GPU memory
@@ -181,18 +232,21 @@ def perform_diarization(audio_path, segmentation_model, embedding_model, num_spe
         return {"error": f"Diarization error: {str(e)}"}
 
 # Combined transcription and diarization
-def process_audio_with_diarization(audio_path, task, segmentation_model, embedding_model, 
-                                  num_speakers=2, threshold=0.5, return_timestamps=True):
-    """Process audio with both transcription and speaker diarization"""
+def process_audio_with_diarization(audio_path, task, segmentation_model, embedding_model,
+                                   num_speakers=2, threshold=0.5, return_timestamps=True):
+    """Process audio with both transcription and speaker diarization optimized for RTX 4090"""
     try:
+        # Configure GPU for optimal performance
+        setup_gpu()
+        
         # Track start time for performance metrics
         start_time = time.time()
         
-        # Get transcription with timestamps
-        transcription = transcribe_audio(audio_path, task, return_timestamps=True)
-        transcription_time = time.time() - start_time
+        # Pre-load audio to avoid multiple file reads
+        y, sr = librosa.load(audio_path, sr=None)
+        duration = librosa.get_duration(y=y, sr=sr)
         
-        # Create SpeakerDiarizer instance
+        # Create SpeakerDiarizer instance early to allow parallel initialization
         diarizer = SpeakerDiarizer(
             segmentation_model=segmentation_model,
             embedding_model=embedding_model,
@@ -207,14 +261,16 @@ def process_audio_with_diarization(audio_path, task, segmentation_model, embeddi
             gr.Info(f"Estimated number of speakers: {estimated_speakers}")
             diarizer.num_speakers = estimated_speakers
         
-        # Process audio file
+        # Get transcription with timestamps
+        transcription = transcribe_audio(audio_path, task, return_timestamps=True)
+        transcription_time = time.time() - start_time
+        
+        # Process audio file for diarization
         diarization_start = time.time()
         segments = diarizer.process_file(audio_path)
         diarization_time = time.time() - diarization_start
         
-        # Get basic audio info for duration
-        y, sr = librosa.load(audio_path, sr=None)
-        duration = librosa.get_duration(y=y, sr=sr)
+        # Duration was already calculated above
         
         # If there was an error in transcription
         if isinstance(transcription, dict) and "error" in transcription:
@@ -252,7 +308,8 @@ def process_audio_with_diarization(audio_path, task, segmentation_model, embeddi
         # Calculate total processing time
         total_time = time.time() - start_time
         
-        return {
+        # Prepare enhanced output with additional information
+        output_json = {
             "text": transcription["text"] if "text" in transcription else "",
             "segments": result,
             "conversation": conversation,
@@ -265,6 +322,32 @@ def process_audio_with_diarization(audio_path, task, segmentation_model, embeddi
                 "realtime_factor": f"{total_time/duration:.2f}x"
             }
         }
+        
+        # Add speaker names if LLM is available
+        if LLM_AVAILABLE:
+            try:
+                # Identify speaker names
+                speaker_names = llm_helper.identify_speaker_names_llm(result)
+                if speaker_names and any(speaker_names.values()):
+                    output_json["speaker_names"] = speaker_names
+                    print(f"Identified speaker names: {speaker_names}")
+                
+                # Generate summary
+                summary = llm_helper.summarize_conversation(result)
+                if summary:
+                    output_json["summary"] = summary
+                    print(f"Generated summary: {summary}")
+                
+                # Extract topics
+                topics = llm_helper.extract_topics(result)
+                if topics:
+                    output_json["topics"] = topics
+                    print(f"Extracted topics: {topics}")
+            except Exception as e:
+                print(f"Error generating LLM content: {e}")
+        
+        # Return the enhanced result as JSON
+        return output_json
     except Exception as e:
         import traceback
         traceback.print_exc()
@@ -275,7 +358,7 @@ cyberpunk_theme = gr.themes.Soft(
     primary_hue="green",
     secondary_hue="cyan",
     neutral_hue="slate",
-    font=[gr.themes.GoogleFont("Orbitron"), "ui-sans-serif", "system-ui"],
+    font=[gr.themes.GoogleFont("Quicksand"), "ui-sans-serif", "system-ui"],
 ).set(
     button_primary_background_fill="#00ff9d",
     button_primary_background_fill_hover="#00cc7a",
