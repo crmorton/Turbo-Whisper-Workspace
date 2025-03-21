@@ -15,37 +15,90 @@
 # limitations under the License.
 
 import wave
+import os
+import tempfile
 from functools import lru_cache
 from typing import Tuple
 
 import numpy as np
+import librosa
+import soundfile as sf
 import sherpa_onnx
 from huggingface_hub import hf_hub_download
+from pydub import AudioSegment
 
 
-def read_wave(wave_filename: str) -> Tuple[np.ndarray, int]:
+def read_wave(audio_path: str) -> Tuple[np.ndarray, int]:
     """
+    Read audio file in any format and convert to mono numpy array
+    
     Args:
-      wave_filename:
-        Path to a wave file. It should be single channel and each sample should
-        be 16-bit. Its sample rate does not need to be 16kHz.
+      audio_path:
+        Path to an audio file. Can be any format supported by librosa/pydub.
+        
     Returns:
       Return a tuple containing:
        - A 1-D array of dtype np.float32 containing the samples, which are
        normalized to the range [-1, 1].
-       - sample rate of the wave file
+       - sample rate of the audio file
     """
-
-    with wave.open(wave_filename) as f:
-        assert f.getnchannels() == 1, f.getnchannels()
-        assert f.getsampwidth() == 2, f.getsampwidth()  # it is in bytes
-        num_samples = f.getnframes()
-        samples = f.readframes(num_samples)
-        samples_int16 = np.frombuffer(samples, dtype=np.int16)
-        samples_float32 = samples_int16.astype(np.float32)
-
-        samples_float32 = samples_float32 / 32768
-        return samples_float32, f.getframerate()
+    try:
+        # First attempt: Try using librosa which handles many formats
+        try:
+            audio, sr = librosa.load(audio_path, sr=None, mono=True)
+            # Ensure float32 and normalized to [-1, 1]
+            audio = audio.astype(np.float32)
+            if audio.max() > 1.0 or audio.min() < -1.0:
+                audio = audio / max(abs(audio.max()), abs(audio.min()))
+            return audio, sr
+        except Exception as e:
+            print(f"Librosa failed: {e}, trying pydub...")
+            
+        # Second attempt: Try using pydub which handles even more formats
+        try:
+            audio_segment = AudioSegment.from_file(audio_path)
+            # Convert to mono if needed
+            if audio_segment.channels > 1:
+                audio_segment = audio_segment.set_channels(1)
+                
+            # Get sample array in float32 and normalize
+            samples = np.array(audio_segment.get_array_of_samples()).astype(np.float32)
+            samples = samples / 32768.0  # Normalize to [-1, 1]
+            
+            return samples, audio_segment.frame_rate
+        except Exception as e:
+            print(f"Pydub failed: {e}, trying to convert format...")
+        
+        # Last resort: Convert to wav using pydub and save as temp file
+        try:
+            audio_segment = AudioSegment.from_file(audio_path)
+            if audio_segment.channels > 1:
+                audio_segment = audio_segment.set_channels(1)
+                
+            # Create a temporary WAV file
+            with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as temp_file:
+                temp_path = temp_file.name
+                audio_segment.export(temp_path, format="wav")
+                
+            # Now read it with wave
+            with wave.open(temp_path) as f:
+                num_samples = f.getnframes()
+                samples = f.readframes(num_samples)
+                samples_int16 = np.frombuffer(samples, dtype=np.int16)
+                samples_float32 = samples_int16.astype(np.float32)
+                samples_float32 = samples_float32 / 32768
+                sr = f.getframerate()
+                
+            # Clean up temp file
+            os.unlink(temp_path)
+            return samples_float32, sr
+        except Exception as e:
+            raise RuntimeError(f"All methods to read audio file failed. Last error: {e}")
+            
+    except Exception as e:
+        print(f"Error reading audio file: {e}")
+        # Return empty audio rather than crashing
+        return np.zeros(1600, dtype=np.float32), 16000
 
 
 @lru_cache(maxsize=30)

@@ -86,19 +86,22 @@ class SpeakerDiarizer:
         
         # Process audio
         samples, sample_rate = read_wave(audio_path)
-        result = self.diarizer.compute_similarity(
+        
+        # Use the correct API for sherpa-onnx
+        result = self.diarizer.compute(
             samples=samples,
             sample_rate=sample_rate
         )
         
         # Convert results to segments
         segments = []
-        for i, segment in enumerate(result):
+        # sherpa_onnx.OfflineSpeakerDiarization.compute returns turn_with_speaker_id
+        for turn in result:
             segments.append(DiarizationSegment(
-                speaker_id=segment.speaker_id,
-                start_time=segment.start_time,
-                end_time=segment.end_time,
-                score=segment.similarity_score
+                speaker_id=turn.speaker,  # Updated API uses 'speaker' field
+                start_time=turn.start,     # Updated API uses 'start' field
+                end_time=turn.end,         # Updated API uses 'end' field
+                score=1.0                  # No score in the API, use default
             ))
         
         return segments

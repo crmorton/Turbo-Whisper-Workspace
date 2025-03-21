@@ -69,7 +69,7 @@ def load_whisper_model(device="cuda:0" if torch.cuda.is_available() else "cpu"):
             torch_dtype=torch.float16 if torch.cuda.is_available() else torch.float32,
             device=device,
             model_kwargs={
-                "attn_implementation": "flash_attention_2" if torch.cuda.is_available() else "eager"
+                "attn_implementation": "eager"  # Disabled flash_attention_2 due to installation issues
             },
         )
         return pipe
