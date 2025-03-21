@@ -30,6 +30,10 @@ from dotenv import load_dotenv
 from pydub import AudioSegment
 import tempfile
 import uuid
+import librosa
+import soundfile as sf
+import numpy as np
+
 
 # Import from local modules
 from model import get_speaker_diarization, read_wave, speaker_segmentation_models, embedding2models

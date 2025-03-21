@@ -88,20 +88,19 @@ class SpeakerDiarizer:
         samples, sample_rate = read_wave(audio_path)
         
         # Use the correct API for sherpa-onnx
-        result = self.diarizer.compute(
-            samples=samples,
-            sample_rate=sample_rate
-        )
+        result = self.diarizer.process(
+            samples=samples
+        ).sort_by_start_time()
         
         # Convert results to segments
         segments = []
-        # sherpa_onnx.OfflineSpeakerDiarization.compute returns turn_with_speaker_id
+        # sherpa_onnx.OfflineSpeakerDiarization.process returns Turn objects
         for turn in result:
             segments.append(DiarizationSegment(
-                speaker_id=turn.speaker,  # Updated API uses 'speaker' field
-                start_time=turn.start,     # Updated API uses 'start' field
-                end_time=turn.end,         # Updated API uses 'end' field
-                score=1.0                  # No score in the API, use default
+                speaker_id=turn.speaker,
+                start_time=turn.start,
+                end_time=turn.end,
+                score=1.0  # No score in the sherpa-onnx API, use default
             ))
         
         return segments
@@ -143,32 +142,22 @@ class SpeakerDiarizer:
             # Process audio
             samples, sample_rate = read_wave(audio_path)
             
-            # Extract embeddings
+            # Extract embeddings - the API doesn't have extract_embeddings method
+            # Instead, we'll use a different approach by setting num_clusters=1 and then clustering
             self._ensure_diarizer()
-            embeddings = self.diarizer.extract_embeddings(samples, sample_rate)
+            # Generate embeddings by processing with 1 speaker and extract them later
+            # This is a temporary solution since the sherpa-onnx API doesn't expose embeddings
             
-            # Try different numbers of speakers
-            best_score = -1
-            best_num_speakers = 2
+            # Since we can't access embeddings directly in the sherpa-onnx API,
+            # we'll use a simpler approach - just return the default or a heuristic
+            # based on audio duration
             
-            for num_speakers in range(1, min(max_speakers + 1, len(embeddings))):
-                # Cluster with this number of speakers
-                clusters = self.diarizer.cluster_embeddings(
-                    embeddings=embeddings,
-                    num_clusters=num_speakers,
-                    threshold=self.threshold
-                )
-                
-                # Skip if we don't have enough clusters for silhouette score
-                if len(set(clusters)) < 2:
-                    continue
-                
-                # Calculate silhouette score
-                score = silhouette_score(embeddings, clusters)
-                
-                if score > best_score:
-                    best_score = score
-                    best_num_speakers = num_speakers
+            # Heuristic: 1 speaker per ~30 seconds of audio, with minimum of 1 and maximum of max_speakers
+            audio_duration = len(samples) / sample_rate
+            estimated_speakers = max(1, min(max_speakers, int(audio_duration / 30)))
+            
+            # Return the estimated number of speakers or default
+            best_num_speakers = max(2, estimated_speakers)  # At least 2 speakers for diarization
             
             return best_num_speakers
         
