@@ -141,6 +141,22 @@ update_deps() {
     echo -e "${GREEN}${BOLD}[✓] Dependencies updated${RESET}"
 }
 
+# Download speaker embedding models
+download_models() {
+    echo -e "${CYAN}${BOLD}[*] Downloading speaker embedding models...${RESET}"
+    
+    # Check if the download script exists
+    if [ ! -f "${PROJECT_ROOT}/scripts/download_models.sh" ]; then
+        echo -e "${RED}${BOLD}[!] Model download script not found.${RESET}"
+        exit 1
+    fi
+    
+    # Run the download script with any passed arguments
+    "${PROJECT_ROOT}/scripts/download_models.sh" "$@"
+    
+    echo -e "${GREEN}${BOLD}[✓] Model download process completed${RESET}"
+}
+
 # Show help
 show_help() {
     echo -e "${CYAN}${BOLD}Usage:${RESET}"
@@ -148,6 +164,7 @@ show_help() {
     echo
     echo -e "${CYAN}${BOLD}Commands:${RESET}"
     echo -e "  ${YELLOW}setup${RESET}      Create virtual environment and install dependencies"
+    echo -e "  ${YELLOW}models${RESET}     Download speaker embedding models to local directory"
     echo -e "  ${YELLOW}start${RESET}      Start the application"
     echo -e "  ${YELLOW}stop${RESET}       Stop the application"
     echo -e "  ${YELLOW}restart${RESET}    Restart the application"
@@ -171,6 +188,12 @@ main() {
             check_venv
             activate_venv
             install_deps
+            ;;
+        models)
+            shift  # Remove the first argument (models)
+            check_venv
+            activate_venv
+            download_models "$@"
             ;;
         start)
             check_venv
@@ -198,6 +221,9 @@ main() {
             check_venv
             activate_venv
             run_tests
+            ;;
+        help)
+            show_help
             ;;
         *)
             echo -e "${RED}${BOLD}[!] Unknown command: $1${RESET}"

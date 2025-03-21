@@ -35,6 +35,22 @@ import librosa
 import soundfile as sf
 import numpy as np
 
+# Check for GPU availability at startup
+if torch.cuda.is_available():
+    gpu_name = torch.cuda.get_device_name(0)
+    gpu_count = torch.cuda.device_count()
+    total_memory_mb = torch.cuda.get_device_properties(0).total_memory / (1024 * 1024)
+    print("\n" + "="*80)
+    print(f"🚀 GPU DETECTED: {gpu_name} 🚀")
+    print(f"Total GPU Memory: {total_memory_mb:.0f} MB")
+    print(f"CUDA Version: {torch.version.cuda}")
+    print("="*80 + "\n")
+else:
+    print("\n" + "="*80)
+    print("⚠️ NO GPU DETECTED - RUNNING ON CPU ⚠️")
+    print("Processing will be significantly slower without GPU acceleration.")
+    print("="*80 + "\n")
+
 # Import LLM helper module
 try:
     import llm_helper
@@ -73,7 +89,11 @@ COMMON_NAMES = [
 
 
 # Import from local modules
-from model import get_speaker_diarization, read_wave, speaker_segmentation_models, embedding2models
+from model import (
+    get_speaker_diarization, read_wave,
+    speaker_segmentation_models, embedding2models,
+    get_local_segmentation_models, get_local_embedding_models
+)
 from utils.audio_processor import process_audio_file, extract_audio_features
 from utils.audio_info import get_audio_info
 from utils.visualizer import plot_waveform, plot_spectrogram, plot_pitch_track, plot_chromagram, plot_speaker_diarization
@@ -82,9 +102,19 @@ from diar import SpeakerDiarizer, format_as_conversation
 # Load environment variables
 load_dotenv()
 
+# Cache for initialized components
+_CACHE = {
+    'gpu_setup_done': False,
+    'whisper_model': None
+}
+
 # Set up GPU settings and memory management
 def setup_gpu():
     """Configure GPU settings and optimize memory usage for RTX 4090"""
+    # Check if GPU setup has already been done
+    if _CACHE['gpu_setup_done']:
+        return True
+        
     if torch.cuda.is_available():
         # Enable cuDNN benchmark mode for optimal performance
         torch.backends.cudnn.benchmark = True
@@ -98,13 +128,31 @@ def setup_gpu():
         # Set memory strategy
         torch.cuda.empty_cache()
         
-        # Print GPU info
+        # Print detailed GPU info
         gpu_name = torch.cuda.get_device_name(0)
-        print(f"Using GPU: {gpu_name}")
+        gpu_count = torch.cuda.device_count()
+        
+        # Get GPU memory information
+        total_memory_mb = torch.cuda.get_device_properties(0).total_memory / (1024 * 1024)
+        
+        print(f"🚀 GPU ACCELERATION ENABLED 🚀")
+        print(f"GPU Device: {gpu_name}")
+        print(f"Number of GPUs: {gpu_count}")
+        print(f"Total GPU Memory: {total_memory_mb:.0f} MB")
         print(f"CUDA Version: {torch.version.cuda}")
+        print(f"PyTorch CUDA: {torch.version.cuda}")
+        print(f"cuDNN Version: {torch.backends.cudnn.version() if hasattr(torch.backends.cudnn, 'version') else 'Unknown'}")
+        print(f"TF32 Enabled: {torch.backends.cuda.matmul.allow_tf32}")
+        
+        # Mark GPU setup as done
+        _CACHE['gpu_setup_done'] = True
         
         return True
-    return False
+    else:
+        print("⚠️ GPU NOT AVAILABLE - USING CPU ⚠️")
+        print("Processing will be significantly slower without GPU acceleration.")
+        print(f"PyTorch version: {torch.__version__}")
+        return False
 
 def clear_gpu_memory():
     """Free up GPU memory after processing"""
@@ -112,11 +160,161 @@ def clear_gpu_memory():
         torch.cuda.empty_cache()
         torch.cuda.ipc_collect()
 
+def get_gpu_memory_info():
+    """Get current GPU memory usage information"""
+    if not torch.cuda.is_available():
+        return "GPU not available"
+        
+    try:
+        # Get memory information for the current device
+        device = torch.cuda.current_device()
+        total_memory = torch.cuda.get_device_properties(device).total_memory
+        reserved_memory = torch.cuda.memory_reserved(device)
+        allocated_memory = torch.cuda.memory_allocated(device)
+        free_memory = total_memory - allocated_memory
+        
+        # Convert to MB for readability
+        total_mb = total_memory / (1024 * 1024)
+        reserved_mb = reserved_memory / (1024 * 1024)
+        allocated_mb = allocated_memory / (1024 * 1024)
+        free_mb = free_memory / (1024 * 1024)
+        
+        return {
+            "total_mb": f"{total_mb:.2f} MB",
+            "reserved_mb": f"{reserved_mb:.2f} MB",
+            "allocated_mb": f"{allocated_mb:.2f} MB",
+            "free_mb": f"{free_mb:.2f} MB",
+            "utilization_percent": f"{(allocated_memory / total_memory) * 100:.2f}%"
+        }
+    except Exception as e:
+        return f"Error getting GPU memory info: {str(e)}"
+
+def check_gpu_efficiency():
+    """Check if GPU is being used efficiently and provide recommendations"""
+    if not torch.cuda.is_available():
+        return "GPU not available - running on CPU"
+    
+    try:
+        # Get GPU properties
+        device = torch.cuda.current_device()
+        props = torch.cuda.get_device_properties(device)
+        
+        # Check CUDA version
+        cuda_version = torch.version.cuda
+        major_version = int(cuda_version.split('.')[0]) if cuda_version else 0
+        
+        # Get memory information
+        total_memory = props.total_memory / (1024 * 1024)  # MB
+        allocated_memory = torch.cuda.memory_allocated(device) / (1024 * 1024)  # MB
+        utilization = (allocated_memory / total_memory) * 100
+        
+        recommendations = []
+        
+        # Check if using a modern GPU
+        if props.major < 7:
+            recommendations.append("⚠️ Using an older GPU architecture. Consider upgrading to an RTX series GPU for better performance.")
+        
+        # Check CUDA version
+        if major_version < 11:
+            recommendations.append("⚠️ Using an older CUDA version. Consider upgrading to CUDA 11.x or newer for better performance.")
+        
+        # Check memory utilization
+        if utilization < 30:
+            recommendations.append("⚠️ Low GPU memory utilization. Consider increasing batch size or model size to utilize GPU more efficiently.")
+        elif utilization > 95:
+            recommendations.append("⚠️ Very high GPU memory utilization. Consider reducing batch size to avoid out-of-memory errors.")
+        
+        # Check if using mixed precision
+        if not torch.cuda.is_bf16_supported() and not torch.cuda.is_fp16_supported():
+            recommendations.append("⚠️ GPU does not support efficient mixed precision. Performance may be limited.")
+        
+        # Return results
+        result = {
+            "gpu_name": props.name,
+            "compute_capability": f"{props.major}.{props.minor}",
+            "cuda_version": cuda_version,
+            "memory_utilization": f"{utilization:.2f}%",
+            "recommendations": recommendations
+        }
+        
+        return result
+    except Exception as e:
+        return f"Error checking GPU efficiency: {str(e)}"
+
 # Load Whisper Model with optimizations for RTX 4090
 def load_whisper_model(device="cuda:0" if torch.cuda.is_available() else "cpu"):
     """Load and optimize the Whisper model for maximum performance on RTX 4090"""
+    # Check if model is already loaded
+    if _CACHE['whisper_model'] is not None:
+        return _CACHE['whisper_model']
+        
     try:
-        from transformers import pipeline, AutoModelForSpeechSeq2Seq, AutoProcessor
+        # Import the required modules directly
+        import transformers
+        from transformers import AutoModelForSpeechSeq2Seq, AutoProcessor
+        
+        # Check if pipeline is available in transformers
+        if not hasattr(transformers, 'pipeline'):
+            print("Warning: transformers.pipeline not found, using alternative approach")
+            
+            # Alternative approach without pipeline - direct model usage
+            try:
+                print("Loading Whisper model directly without pipeline...")
+                model_id = "openai/whisper-large-v3-turbo"
+                
+                # Load model with eager attention
+                model = AutoModelForSpeechSeq2Seq.from_pretrained(
+                    model_id,
+                    torch_dtype=torch.float16,
+                    use_safetensors=True,
+                    attn_implementation="eager",
+                    use_cache=True
+                )
+                model.to(device)
+                
+                # Load processor
+                processor = AutoProcessor.from_pretrained(model_id)
+                
+                # Create a simple wrapper class that mimics the pipeline interface
+                class WhisperWrapper:
+                    def __init__(self, model, processor):
+                        self.model = model
+                        self.processor = processor
+                        
+                    def __call__(self, audio_path, **kwargs):
+                        try:
+                            # Load audio
+                            with open(audio_path, "rb") as f:
+                                audio_data = f.read()
+                                
+                            # Process audio
+                            input_features = self.processor(audio_data, sampling_rate=16000, return_tensors="pt").input_features
+                            input_features = input_features.to(device)
+                            
+                            # Generate tokens
+                            predicted_ids = self.model.generate(input_features)
+                            
+                            # Decode tokens
+                            transcription = self.processor.batch_decode(predicted_ids, skip_special_tokens=True)[0]
+                            
+                            return {"text": transcription}
+                        except Exception as e:
+                            print(f"Error in WhisperWrapper: {e}")
+                            return {"text": f"Error: {str(e)}"}
+                
+                wrapper = WhisperWrapper(model, processor)
+                print("Successfully created Whisper wrapper")
+                
+                # Cache the wrapper
+                _CACHE['whisper_model'] = wrapper
+                
+                return wrapper
+            except Exception as e:
+                print(f"Error creating Whisper wrapper: {e}")
+                return None
+            
+        # If pipeline is available, import it
+        from transformers import pipeline
         
         # Use eager implementation directly since flash_attention causes issues
         print("Loading Whisper with eager implementation...")
@@ -148,6 +346,10 @@ def load_whisper_model(device="cuda:0" if torch.cuda.is_available() else "cpu"):
                 device=device,
             )
             print("Successfully loaded Whisper with eager implementation and full optimization")
+            
+            # Cache the model
+            _CACHE['whisper_model'] = pipe
+            
             return pipe
             
         except Exception as model_err:
@@ -165,6 +367,10 @@ def load_whisper_model(device="cuda:0" if torch.cuda.is_available() else "cpu"):
                 },
             )
             print("Successfully loaded Whisper with simple pipeline")
+            
+            # Cache the model
+            _CACHE['whisper_model'] = pipe
+            
             return pipe
     except Exception as e:
         print(f"Error loading Whisper model: {e}")
@@ -176,25 +382,48 @@ def transcribe_audio(audio_path, task="transcribe", return_timestamps=False):
     try:
         # Create temporary directory for processing
         with tempfile.TemporaryDirectory() as temp_dir:
-            # Load model
-            pipe = load_whisper_model()
+            # Ensure GPU is set up before loading model
+            gpu_available = setup_gpu()
+            if gpu_available:
+                print("Using GPU for transcription")
+            else:
+                print("WARNING: Using CPU for transcription (much slower)")
+                
+            # Load model with appropriate device
+            pipe = load_whisper_model(device="cuda:0" if gpu_available else "cpu")
             if not pipe:
                 return {"error": "Failed to load transcription model"}
             
             # Prepare generate kwargs based on task
             generate_kwargs = {"task": task}
+            
+            # Log GPU memory before transcription if available
+            if gpu_available:
+                print("GPU memory before transcription:")
+                print(get_gpu_memory_info())
+                
             # Run transcription with parameters optimized for RTX 4090
             outputs = pipe(
                 audio_path,
                 chunk_length_s=60,  # Doubled chunk size for faster processing
-                batch_size=512 if torch.cuda.is_available() else 32,  # Increased batch size for RTX 4090
+                batch_size=512 if gpu_available else 32,  # Increased batch size for RTX 4090
                 stride_length_s=5,  # Increased stride for faster processing
                 generate_kwargs=generate_kwargs,
                 return_timestamps=return_timestamps
             )
             
+            # Log GPU memory after transcription if available
+            if gpu_available:
+                print("GPU memory after transcription (before cleanup):")
+                print(get_gpu_memory_info())
+            
             # Clear GPU memory
             clear_gpu_memory()
+            
+            # Log GPU memory after cleanup if available
+            if gpu_available:
+                print("GPU memory after cleanup:")
+                print(get_gpu_memory_info())
             
             return outputs
     except Exception as e:
@@ -237,7 +466,14 @@ def process_audio_with_diarization(audio_path, task, segmentation_model, embeddi
     """Process audio with both transcription and speaker diarization optimized for RTX 4090"""
     try:
         # Configure GPU for optimal performance
-        setup_gpu()
+        gpu_available = setup_gpu()
+        if gpu_available:
+            print("GPU setup successful, using CUDA for processing")
+            # Log initial GPU memory state
+            print("Initial GPU memory state:")
+            print(get_gpu_memory_info())
+        else:
+            print("WARNING: GPU not available, falling back to CPU (this will be much slower)")
         
         # Track start time for performance metrics
         start_time = time.time()
@@ -260,15 +496,25 @@ def process_audio_with_diarization(audio_path, task, segmentation_model, embeddi
             estimated_speakers = diarizer.estimate_num_speakers(audio_path)
             gr.Info(f"Estimated number of speakers: {estimated_speakers}")
             diarizer.num_speakers = estimated_speakers
-        
         # Get transcription with timestamps
         transcription = transcribe_audio(audio_path, task, return_timestamps=True)
         transcription_time = time.time() - start_time
         
+        # Log GPU memory state after transcription
+        if gpu_available:
+            print("GPU memory state after transcription:")
+            print(get_gpu_memory_info())
+        
+        # Process audio file for diarization
         # Process audio file for diarization
         diarization_start = time.time()
         segments = diarizer.process_file(audio_path)
         diarization_time = time.time() - diarization_start
+        
+        # Log GPU memory state after diarization
+        if gpu_available:
+            print("GPU memory state after diarization:")
+            print(get_gpu_memory_info())
         
         # Duration was already calculated above
         
@@ -537,22 +783,32 @@ with gr.Blocks(theme=cyberpunk_theme, css="""
                         )
                     
                     with gr.Accordion("Advanced Settings", open=False):
+                        # Get locally available models
+                        local_segmentation_models = get_local_segmentation_models()
+                        local_embedding_models = get_local_embedding_models()
+                        
+                        # Use locally available segmentation models
                         segmentation_model = gr.Dropdown(
-                            choices=speaker_segmentation_models,
-                            value=speaker_segmentation_models[0],
-                            label="Segmentation Model"
+                            choices=local_segmentation_models,
+                            value=local_segmentation_models[0] if local_segmentation_models else speaker_segmentation_models[0],
+                            label="Segmentation Model (Local)"
                         )
                         
+                        # Use locally available embedding model types
+                        local_embedding_types = list(local_embedding_models.keys())
                         embedding_model_type = gr.Dropdown(
-                            choices=list(embedding2models.keys()),
-                            value=list(embedding2models.keys())[0],
-                            label="Embedding Model Type"
+                            choices=local_embedding_types,
+                            value=local_embedding_types[0] if local_embedding_types else list(embedding2models.keys())[0],
+                            label="Embedding Model Type (Local)"
                         )
                         
+                        # Use locally available embedding models for the selected type
+                        first_type = local_embedding_types[0] if local_embedding_types else list(embedding2models.keys())[0]
+                        first_models = local_embedding_models.get(first_type, embedding2models[first_type])
                         embedding_model = gr.Dropdown(
-                            choices=embedding2models[list(embedding2models.keys())[0]],
-                            value=embedding2models[list(embedding2models.keys())[0]][0],
-                            label="Embedding Model"
+                            choices=first_models,
+                            value=first_models[0] if first_models else embedding2models[first_type][0],
+                            label="Embedding Model (Local)"
                         )
                         
                         threshold = gr.Slider(
@@ -661,7 +917,16 @@ with gr.Blocks(theme=cyberpunk_theme, css="""
     
     # Connect embedding model type to embedding model choices
     def update_embedding_models(model_type):
-        return gr.Dropdown(choices=embedding2models[model_type], value=embedding2models[model_type][0])
+        # Get locally available models
+        local_embedding_models = get_local_embedding_models()
+        
+        # Use locally available models if available, otherwise fall back to all models
+        if model_type in local_embedding_models:
+            models = local_embedding_models[model_type]
+        else:
+            models = embedding2models[model_type]
+            
+        return gr.Dropdown(choices=models, value=models[0] if models else embedding2models[model_type][0])
     
     embedding_model_type.change(
         fn=update_embedding_models,

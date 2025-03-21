@@ -40,7 +40,13 @@ cd CyberVox-Audio-Workspace
 ./scripts/manage.sh setup
 ```
 
-3. Start the application:
+3. Download speaker embedding models (recommended):
+```bash
+./scripts/download_models.sh
+```
+This will download all required speaker embedding models to the local `models` directory, making the application more reliable by not depending on remote repositories at runtime.
+
+4. Start the application:
 ```bash
 ./scripts/manage.sh start
 ```
