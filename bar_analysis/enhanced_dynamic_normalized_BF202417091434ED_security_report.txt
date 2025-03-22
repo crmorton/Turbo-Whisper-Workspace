@@ -1,0 +1,19 @@
+BAR SECURITY REPORT
+===================
+
+Audio File: enhanced_dynamic_normalized_BF202417091434ED.flac
+Date: 2025-03-22 07:16:36
+
+Security Concern Level: 0/5
+
+Potential Concerns:
+- No concerns detected
+
+Speakers:
+- SPEAKER_00: 1 segments
+
+Full Transcript:
+[0.00 - 10.00] SPEAKER_00: [Audio processed but no speech detected]
+
+AI-Generated Summary:
+Conversation summary not available (LLM not loaded)

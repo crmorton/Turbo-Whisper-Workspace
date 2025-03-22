@@ -1,0 +1,12 @@
+{
+  "segments": [
+    {
+      "id": 0,
+      "start": 0.0,
+      "end": 10.0,
+      "text": "[Audio processed but no speech detected]",
+      "speaker": "SPEAKER_00"
+    }
+  ],
+  "text": "[Audio processed but no speech detected]"
+}
