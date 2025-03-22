@@ -30,6 +30,16 @@ model-index:
 ---
 # Hermes 3 - Llama-3.1 8B
 
+## Use in Turbo-Whisper-Workspace
+
+This model is used in our Turbo-Whisper-Workspace project for the following tasks:
+
+1. **Speaker Name Identification**: Analyzing conversation transcripts to identify speaker names from context clues
+2. **Conversation Summarization**: Creating concise summaries of transcribed conversations
+3. **Topic Extraction**: Identifying the main topics discussed in conversations
+
+We've chosen this model for its excellent performance on conversational tasks and its ability to understand and extract semantic information from text.
+
 ![image/jpeg](https://cdn-uploads.huggingface.co/production/uploads/6317aade83d8d2fd903192d9/bMcZ3sNNQK8SRZpHXBmwM.jpeg)
 
 ## Model Description

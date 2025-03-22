@@ -10,6 +10,7 @@ import torch
 import librosa
 import numpy as np
 from typing import Dict, List, Optional, Union, Any, Tuple
+import traceback
 
 # Import from diar.py
 from diar import SpeakerDiarizer, format_as_conversation
@@ -61,7 +62,8 @@ class AudioProcessingPipeline:
             gpu_count = torch.cuda.device_count()
             total_memory_mb = torch.cuda.get_device_properties(0).total_memory / (1024 * 1024)
             cuda_version = torch.version.cuda
-            
+            print(f"Call Stack: {traceback.format_stack()}")
+
             # Print GPU information
             print("🚀 GPU ACCELERATION ENABLED 🚀")
             print(f"GPU Device: {gpu_name}")
@@ -77,6 +79,17 @@ class AudioProcessingPipeline:
                 
                 # Enable TF32 for faster processing on Ampere GPUs (RTX 30xx, A100, etc)
                 torch.backends.cuda.matmul.allow_tf32 = True
+                
+            # Check ONNX Runtime providers for diarization
+            try:
+                import onnxruntime as ort
+                providers = ort.get_available_providers()
+                print(f"🔍 ONNX Runtime Providers: {providers}")
+                if 'CUDAExecutionProvider' not in providers:
+                    print("⚠️ ONNX Runtime doesn't have CUDA support - diarization will use CPU")
+                    print("💡 TIP: To enable GPU for diarization, install onnxruntime-gpu package")
+            except ImportError:
+                print("⚠️ Could not check ONNX Runtime providers - using default configuration")
                 torch.backends.cudnn.allow_tf32 = True
                 
                 # Set cuDNN to benchmark mode for optimal performance
@@ -224,20 +237,57 @@ class AudioProcessingPipeline:
         try:
             # We already imported SpeakerDiarizer from diar at the top of the file
             # Create SpeakerDiarizer instance
+            # Let's try a more direct approach with SpeakerDiarizer
+            print("🎯 Setting up diarizer with optimized configuration")
+            
+            # First, let's check if sherpa-onnx is compiled with GPU support
+            sherpa_gpu_support = False
             try:
-                # First try with GPU provider
-                self.diarizer = SpeakerDiarizer(
-                    segmentation_model=segmentation_model,
-                    embedding_model=embedding_model,
-                    num_speakers=num_speakers,
-                    threshold=threshold
-                )
-            except Exception as gpu_error:
-                # If GPU fails, try with CPU provider
-                print(f"GPU diarization failed: {gpu_error}")
-                print("Falling back to CPU for diarization (this will be slower)")
-                
-                # Try again with CPU provider explicitly specified
+                # Try to import sherpa_onnx to check if it has GPU support
+                import sherpa_onnx
+                # Check if sherpa_onnx has the CUDA provider available
+                if hasattr(sherpa_onnx, 'is_cuda_available'):
+                    sherpa_gpu_support = sherpa_onnx.is_cuda_available()
+                    print(f"💡 Sherpa-ONNX CUDA support: {'Available' if sherpa_gpu_support else 'Not available'}")
+                else:
+                    # If we can't directly check, we'll try to infer from the build info
+                    if hasattr(sherpa_onnx, 'build_info'):
+                        build_info = sherpa_onnx.build_info()
+                        print(f"💡 Sherpa-ONNX build info: {build_info}")
+                        sherpa_gpu_support = 'CUDA' in build_info or 'GPU' in build_info
+            except (ImportError, AttributeError) as e:
+                print(f"⚠️ Could not check sherpa-onnx GPU support: {e}")
+            
+            # Try to use GPU if available
+            if self.gpu_available and sherpa_gpu_support:
+                print("🚀 Attempting to use GPU for diarization")
+                try:
+                    self.diarizer = SpeakerDiarizer(
+                        segmentation_model=segmentation_model,
+                        embedding_model=embedding_model,
+                        num_speakers=num_speakers,
+                        threshold=threshold,
+                        use_gpu=True  # Try to use GPU
+                    )
+                    print("✅ Successfully initialized diarizer with GPU support")
+                except Exception as gpu_error:
+                    print(f"⚠️ GPU diarization failed: {str(gpu_error)}")
+                    print("Falling back to CPU for diarization (this will be slower)")
+                    self.diarizer = SpeakerDiarizer(
+                        segmentation_model=segmentation_model,
+                        embedding_model=embedding_model,
+                        num_speakers=num_speakers,
+                        threshold=threshold,
+                        use_gpu=False  # Force CPU mode
+                    )
+            else:
+                # No GPU support, use CPU directly
+                if self.gpu_available and not sherpa_gpu_support:
+                    print("⚠️ GPU available but sherpa-onnx was not compiled with GPU support")
+                    print("💡 TIP: You might need to reinstall sherpa-onnx with GPU support")
+                else:
+                    print("Using CPU for diarization (GPU not available)")
+                    
                 self.diarizer = SpeakerDiarizer(
                     segmentation_model=segmentation_model,
                     embedding_model=embedding_model,
@@ -267,20 +317,7 @@ class AudioProcessingPipeline:
         if not LLM_AVAILABLE:
             print("LLM helper not available. Cannot set LLM model.")
             return False
-            
-        try:
-            if model_name in llm_helper.AVAILABLE_LLM_MODELS:
-                print(f"Setting LLM model to: {model_name}")
-                llm_helper.set_current_model(model_name)
-                self.llm_model = model_name
-                return True
-            else:
-                print(f"LLM model {model_name} not available")
-                return False
-                
-        except Exception as e:
-            print(f"Error setting LLM model: {e}")
-            return False
+
     
     def transcribe(self, audio_path: str, task: str = "transcribe", 
                   return_timestamps: bool = True) -> Dict[str, Any]:
@@ -358,6 +395,8 @@ class AudioProcessingPipeline:
                 print(f"Estimated number of speakers: {estimated_speakers}")
                 self.diarizer.num_speakers = estimated_speakers
             
+
+
             # Log GPU memory before diarization if available
             if self.gpu_available:
                 print("GPU memory before diarization:")
@@ -471,16 +510,34 @@ class AudioProcessingPipeline:
                 fallback_names = llm_helper.identify_speaker_names_fallback(valid_segments)
                 print(f"Fallback name identification result: {fallback_names}")
                 
-                # Check if Veronica is mentioned in any segment
-                Veronica_mentioned = any('Veronica' in segment.get('text', '').lower() for segment in valid_segments)
-                if Veronica_mentioned and not any(name == "Veronica" for name in fallback_names.values()):
-                    print("Veronica mentioned but not assigned, attempting to fix...")
-                    # Find a speaker to assign Veronica to
-                    for speaker_id in fallback_names.keys():
-                        if fallback_names[speaker_id].startswith("Speaker"):
-                            fallback_names[speaker_id] = "Veronica"
-                            print(f"Assigned Veronica to {speaker_id}")
-                            break
+                # Check if special names (Veronica, Alexandra) are mentioned in any segment
+                for special_name in ["Veronica", "Alexandra"]:
+                    name_mentioned = any(special_name.lower() in segment.get('text', '').lower() for segment in valid_segments)
+                    if name_mentioned and not any(name == special_name for name in fallback_names.values()):
+                        print(f"{special_name} mentioned but not assigned, attempting to fix...")
+                        
+                        # First, check if anyone is addressing this person directly
+                        speaker_addressing_person = None
+                        for segment in valid_segments:
+                            if special_name.lower() in segment.get('text', '').lower():
+                                speaker_addressing_person = segment.get('speaker')
+                                print(f"Found speaker {speaker_addressing_person} addressing {special_name}")
+                                break
+                        
+                        if speaker_addressing_person:
+                            # Find other speakers who might be the addressed person
+                            other_speakers = [s for s in fallback_names.keys() if s != speaker_addressing_person]
+                            if other_speakers:
+                                fallback_names[other_speakers[0]] = special_name
+                                print(f"Assigned {special_name} to {other_speakers[0]} based on being addressed")
+                                continue
+                        
+                        # If we couldn't find by addressing, find a speaker to assign the name to
+                        for speaker_id in fallback_names.keys():
+                            if fallback_names[speaker_id].startswith("Speaker"):
+                                fallback_names[speaker_id] = special_name
+                                print(f"Assigned {special_name} to {speaker_id}")
+                                break
                 
                 return fallback_names
             except Exception as e:

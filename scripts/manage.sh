@@ -109,6 +109,96 @@ run_tests() {
     python -m unittest discover -s tests
 }
 
+# Test GPU functionality
+test_gpu() {
+    echo -e "${MAGENTA}${BOLD}[*] Testing GPU functionality...${RESET}"
+    cd "$PROJECT_ROOT"
+    
+    # Create a simple test script if it doesn't exist
+    if [ ! -f "${PROJECT_ROOT}/test_gpu.py" ]; then
+        echo -e "${YELLOW}${BOLD}[!] Creating GPU test script...${RESET}"
+        cat > "${PROJECT_ROOT}/test_gpu.py" << 'EOL'
+#!/usr/bin/env python3
+import os
+import sys
+import time
+import logging
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger('gpu_test')
+
+# Add the project root to the path
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+# Import the necessary functions
+try:
+    from llm_helper import verify_gpu_usage, monitor_gpu_usage, get_llm
+    logger.info("Successfully imported GPU functions from llm_helper")
+except ImportError as e:
+    logger.error(f"Failed to import from llm_helper: {e}")
+    sys.exit(1)
+
+def main():
+    logger.info("=== Starting GPU Test ===")
+    
+    # Test 1: Verify GPU availability
+    logger.info("Test 1: Verifying GPU availability...")
+    gpu_available = verify_gpu_usage()
+    if gpu_available:
+        logger.info("✅ GPU verification passed!")
+    else:
+        logger.error("❌ GPU verification failed!")
+        return
+    
+    # Test 2: Monitor GPU usage
+    logger.info("Test 2: Monitoring initial GPU state...")
+    monitor_gpu_usage("Initial State")
+    
+    # Test 3: Load LLM and check GPU usage
+    logger.info("Test 3: Loading LLM and checking GPU usage...")
+    try:
+        start_time = time.time()
+        llm = get_llm()
+        load_time = time.time() - start_time
+        
+        if llm:
+            logger.info(f"✅ LLM loaded successfully in {load_time:.2f} seconds")
+            monitor_gpu_usage("After LLM Load")
+            
+            # Test 4: Run a simple inference
+            logger.info("Test 4: Running simple inference...")
+            prompt = "Summarize the following in one sentence: AI models are becoming increasingly powerful."
+            
+            start_time = time.time()
+            response = llm.create_completion(prompt, max_tokens=100, temperature=0.7, top_p=0.95)
+            inference_time = time.time() - start_time
+            
+            logger.info(f"Inference completed in {inference_time:.2f} seconds")
+            logger.info(f"Response: {response['choices'][0]['text']}")
+            
+            # Final GPU monitoring
+            monitor_gpu_usage("After Inference")
+        else:
+            logger.error("❌ Failed to load LLM")
+    except Exception as e:
+        logger.error(f"Error during LLM testing: {e}")
+    
+    logger.info("=== GPU Test Complete ===")
+
+if __name__ == "__main__":
+    main()
+EOL
+        echo -e "${GREEN}${BOLD}[✓] GPU test script created${RESET}"
+    fi
+    
+    # Run the GPU test
+    python test_gpu.py
+}
+
 # Clean cache files
 clean_cache() {
     echo -e "${CYAN}${BOLD}[*] Cleaning cache files...${RESET}"
@@ -171,6 +261,7 @@ show_help() {
     echo -e "  ${YELLOW}update${RESET}     Update dependencies"
     echo -e "  ${YELLOW}clean${RESET}      Clean cache files"
     echo -e "  ${YELLOW}test${RESET}       Run tests"
+    echo -e "  ${YELLOW}gpu${RESET}        Test GPU functionality"
     echo -e "  ${YELLOW}help${RESET}       Show this help message"
 }
 
@@ -221,6 +312,11 @@ main() {
             check_venv
             activate_venv
             run_tests
+            ;;
+        gpu)
+            check_venv
+            activate_venv
+            test_gpu
             ;;
         help)
             show_help

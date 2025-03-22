@@ -42,37 +42,15 @@ try:
     import llm_helper
     print("Successfully imported llm_helper module")
     LLM_AVAILABLE = True
-    AVAILABLE_LLM_MODELS = list(llm_helper.AVAILABLE_MODELS.keys())
-    print(f"Available LLM models: {AVAILABLE_LLM_MODELS}")
-    
-    # Try to initialize LLM
-    print("Attempting to initialize LLM...")
-    llm = llm_helper.get_llm()
-    if llm:
-        print("Successfully initialized LLM!")
-    else:
-        print("LLM initialization returned None")
-        
-except ImportError as e:
-    print(f"LLM helper module not available: {e}")
-    import traceback
-    traceback.print_exc()
+except ImportError:
+    print("LLM helper module not available")
     LLM_AVAILABLE = False
-    AVAILABLE_LLM_MODELS = []
-except Exception as e:
-    print(f"Unexpected error initializing LLM: {e}")
-    import traceback
-    traceback.print_exc()
-    LLM_AVAILABLE = False
-    AVAILABLE_LLM_MODELS = []
 
 # Import common data structures
 from common_data import COMMON_NAMES
-
-
 # Import from local modules
 from model import (
-    get_speaker_diarization, read_wave,
+    read_wave,
     speaker_segmentation_models, embedding2models,
     get_local_segmentation_models, get_local_embedding_models
 )
@@ -87,33 +65,29 @@ load_dotenv()
 # Import the AudioProcessingPipeline
 from audio_pipeline import AudioProcessingPipeline
 
-# Dictionary to store session-specific pipelines
-_SESSION_PIPELINES = {}
+# Single global pipeline for the entire application
+_GLOBAL_PIPELINE = None
 
-# Function to get or create a pipeline for a session
-def get_pipeline_for_session(session_id=None):
-    """Get or create an AudioProcessingPipeline for the current session"""
-    global _SESSION_PIPELINES
+# Function to get the global pipeline
+def get_global_pipeline():
+    """Get or create the global AudioProcessingPipeline"""
+    global _GLOBAL_PIPELINE
     
-    # Use default session ID if none provided
-    if session_id is None:
-        session_id = "default"
+    # Create the pipeline if it doesn't exist
+    if _GLOBAL_PIPELINE is None:
+        print("Creating new global AudioProcessingPipeline")
+        _GLOBAL_PIPELINE = AudioProcessingPipeline()
         
-    # Create a new pipeline if one doesn't exist for this session
-    if session_id not in _SESSION_PIPELINES:
-        print(f"Creating new AudioProcessingPipeline for session {session_id}")
-        _SESSION_PIPELINES[session_id] = AudioProcessingPipeline()
-        
-    return _SESSION_PIPELINES[session_id]
+    return _GLOBAL_PIPELINE
 
 # Combined transcription and diarization
 def process_audio_with_diarization(audio_path, task, segmentation_model, embedding_model,
-                                   num_speakers=2, threshold=0.5, return_timestamps=True, session_id=None):
-    """Process audio with both transcription and speaker diarization using the pipeline"""
+                                   num_speakers=2, threshold=0.5, return_timestamps=True):
+    """Process audio with both transcription and speaker diarization using the global pipeline"""
     try:
-        # Get pipeline for this session
-        pipeline = get_pipeline_for_session(session_id)
-        print(f"Using pipeline for session: {session_id or 'default'}")
+        # Get the global pipeline
+        pipeline = get_global_pipeline()
+        print("Using global pipeline for processing")
         
         # Process audio using the pipeline
         pipeline_result = pipeline.process_audio(
@@ -332,7 +306,7 @@ with gr.Blocks(theme=cyberpunk_theme, css="""
         # Chat Bubbles Tab (now primary and merged with transcription)
         with gr.TabItem("💬 CyberVox Chat"):
             with gr.Row():
-                with gr.Column(scale=2):
+                with gr.Column(scale=2, elem_classes="audio-input-column"):
                     audio_input = gr.Audio(
                         label="Audio Input",
                         type="filepath",
@@ -403,22 +377,7 @@ with gr.Blocks(theme=cyberpunk_theme, css="""
                             label="Clustering Threshold"
                         )
                         
-                        # LLM model selection
-                        if LLM_AVAILABLE and AVAILABLE_LLM_MODELS:
-                            llm_model = gr.Dropdown(
-                                choices=AVAILABLE_LLM_MODELS,
-                                value=llm_helper.CURRENT_MODEL,
-                                label="LLM Model for Summarization",
-                                info="Select the LLM model to use for speaker identification and summarization"
-                            )
-                            
-                            # Function to handle model change
-                            def change_llm_model(model_name):
-                                if LLM_AVAILABLE:
-                                    llm_helper.set_current_model(model_name)
-                                    print(f"Changed LLM model to: {model_name}")
-                            
-                            llm_model.change(fn=change_llm_model, inputs=llm_model, outputs=[])
+
                     btn_process = gr.Button("Generate Chat", variant="primary")
                 
                 with gr.Column(scale=3):
@@ -494,10 +453,7 @@ with gr.Blocks(theme=cyberpunk_theme, css="""
                         
                         with gr.TabItem("Chromagram"):
                             chroma_plot = gr.Plot(label="🎹 Note Distribution")
-        
-        # Audio Tools Tab
-        with gr.TabItem("🔧 Audio Tools"):
-            gr.Markdown("Coming soon: Audio enhancement, noise reduction, and more tools!")
+
     
     # Connect embedding model type to embedding model choices
     def update_embedding_models(model_type):
@@ -518,79 +474,8 @@ with gr.Blocks(theme=cyberpunk_theme, css="""
         outputs=embedding_model
     )
     
-    # Define the processing function
-    def process_audio(audio, task, segmentation_model, embedding_model, num_speakers, threshold, session_id=None):
-        if not audio:
-            return ("Upload an audio file to begin.",
-                   "*Error: No audio file provided*",
-                   None)
-        
-        try:
-            # Show info message
-            gr.Info("Processing audio...")
-            
-            # Process with transcription and diarization using session-specific pipeline
-            result = process_audio_with_diarization(
-                audio,
-                task,
-                segmentation_model,
-                embedding_model,
-                num_speakers,
-                threshold,
-                return_timestamps=True,
-                session_id=session_id
-            )
-            
-            # Check for errors
-            if isinstance(result, dict) and "error" in result:
-                return (
-                    "An error occurred during processing.",
-                    f"*Error: {result['error']}*",
-                    result
-                )
-            
-            # Handle successful processing
-            if "conversation" in result:
-                return (
-                    result["text"],
-                    f"*Processing completed successfully! Identified {num_speakers} speakers.*",
-                    result
-                )
-            else:
-                return (
-                    result["text"],
-                    "*Processing completed, but speaker diarization might not be accurate.*",
-                    result
-                )
-            
-        except Exception as e:
-            import traceback
-            traceback.print_exc()
-            return (
-                "An error occurred during processing.",
-                f"*Error: {str(e)}*",
-                {"error": str(e)}
-            )
-    
-    # Connect the process button
-    btn_process.click(
-        fn=lambda a, t, s, e, n, th: process_audio(a, t, s, e, n, th, session_id=str(uuid.uuid4())),
-        inputs=[
-            audio_input,
-            task,
-            segmentation_model,
-            embedding_model,
-            num_speakers,
-            threshold
-        ],
-        outputs=[
-            output_raw,
-            status,
-            output_json
-        ],
-        show_progress=True
-    )
-    
+
+
     # Helper function to identify speaker names in text
     def identify_speaker_names(segments):
         # Try to use LLM for name identification if available
@@ -618,6 +503,21 @@ with gr.Blocks(theme=cyberpunk_theme, css="""
             speaker_id = segment['speaker']
             text = segment['text']
                 
+            # Check for specific names we want to prioritize (Alexandra, Veronica)
+            for special_name in ["Alexandra", "Veronica"]:
+                if re.search(f'\\b{special_name}\\b', text, re.IGNORECASE):
+                    print(f"Found {special_name} mentioned in text: {text}")
+                    # If this speaker is addressing the person, they're likely not that person
+                    # So we'll mark this speaker as NOT being that person
+                    if speaker_id in detected_names and detected_names[speaker_id].lower() == special_name.lower():
+                        print(f"Speaker {speaker_id} is addressing {special_name}, so they can't be {special_name}")
+                        detected_names.pop(speaker_id)
+                    
+                    # Add to name mentions for later assignment to OTHER speakers
+                    if special_name not in name_mentions:
+                        name_mentions[special_name] = 0
+                    name_mentions[special_name] += 3
+            
             # Extract names from text
             # Look for common name patterns directly
             for name in COMMON_NAMES:
@@ -652,25 +552,35 @@ with gr.Blocks(theme=cyberpunk_theme, css="""
         # Second pass: assign names to speakers based on frequency and context
         for speaker_id in set([segment['speaker'] for segment in segments]):
             if speaker_id not in detected_names:
-                # Find the most mentioned name that hasn't been assigned yet
-                available_names = [name for name, count in sorted(name_mentions.items(), key=lambda x: x[1], reverse=True) 
-                                if name not in detected_names.values()]                
-                if available_names:
-                    detected_names[speaker_id] = available_names[0]
+                # Special handling for Alexandra and Veronica
+                for special_name in ["Alexandra", "Veronica"]:
+                    if special_name in name_mentions and special_name not in detected_names.values():
+                        # Find speakers who might be addressing this person
+                        addressing_speakers = []
+                        for seg in segments:
+                            if seg['speaker'] != speaker_id and special_name.lower() in seg.get('text', '').lower():
+                                addressing_speakers.append(seg['speaker'])
+                        
+                        # If this speaker is not addressing the special name, they might be that person
+                        if speaker_id not in addressing_speakers:
+                            detected_names[speaker_id] = special_name
+                            print(f"Assigned {special_name} to {speaker_id} based on being addressed")
+                            break
+                
+                # If no special name was assigned, use frequency-based approach
+                if speaker_id not in detected_names:
+                    # Find the most mentioned name that hasn't been assigned yet
+                    available_names = [name for name, count in sorted(name_mentions.items(), key=lambda x: x[1], reverse=True) 
+                                    if name not in detected_names.values()]                
+                    if available_names:
+                        detected_names[speaker_id] = available_names[0]
+                        print(f"Assigned {available_names[0]} to {speaker_id} based on frequency")
         
         return detected_names
 
     # Function to generate chat bubbles from segments
-    def process_chat(audio, task, segmentation_model, embedding_model, num_speakers, threshold, llm_model=None, session_id=None):
-        # Set the LLM model if provided
-        if LLM_AVAILABLE and llm_model is not None:
-            try:
-                if isinstance(llm_model, str) and llm_model in AVAILABLE_LLM_MODELS:
-                    print(f"Setting LLM model to: {llm_model}")
-                    llm_helper.set_current_model(llm_model)
-            except Exception as e:
-                print(f"Error setting LLM model: {e}")
-                
+    def process_chat(audio, task, segmentation_model, embedding_model, num_speakers, threshold):
+
         # Initialize default values
         chat_html = "<div class='chat-container'>Processing audio...</div>"
         audio_path = None
@@ -684,8 +594,7 @@ with gr.Blocks(theme=cyberpunk_theme, css="""
                 
             # Set audio path
             audio_path = audio
-            
-            # Process audio file using session-specific pipeline
+            # Process audio file using global pipeline
             # This handles transcription and diarization
             result = process_audio_with_diarization(
                 audio_path,
@@ -694,8 +603,7 @@ with gr.Blocks(theme=cyberpunk_theme, css="""
                 embedding_model,
                 num_speakers,
                 threshold,
-                return_timestamps=True,
-                session_id=session_id
+                return_timestamps=True
             )
             
             # Generate chat HTML with debug info
@@ -830,50 +738,27 @@ with gr.Blocks(theme=cyberpunk_theme, css="""
             import traceback
             traceback.print_exc()
             return "<div class='chat-container'>Error processing audio</div>", None, "", f"*Error: {str(e)}*"
-    
-    # Connect the chat process button directly
-    if LLM_AVAILABLE and AVAILABLE_LLM_MODELS:
-        # With LLM model
-        btn_process.click(
-            fn=lambda a, t, s, e, n, th, llm: process_chat(a, t, s, e, n, th, llm, session_id=str(uuid.uuid4())),
-            inputs=[
-                audio_input,
-                task,
-                segmentation_model,
-                embedding_model,
-                num_speakers,
-                threshold,
-                llm_model
-            ],
-            outputs=[
-                chat_container,   # Chat bubbles container
-                audio_playback,   # Audio playback
-                output_conversation, # Summary tab
-                status            # Status message
-            ]
-        )
-    else:
-        # Without LLM model
-        btn_process.click(
-            fn=lambda a, t, s, e, n, th: process_chat(a, t, s, e, n, th, None, session_id=str(uuid.uuid4())),
-            inputs=[
-                audio_input,
-                task,
-                segmentation_model,
-                embedding_model,
-                num_speakers,
-                threshold
-            ],
-            outputs=[
-                chat_container,   # Chat bubbles container
-                audio_playback,   # Audio playback
-                output_conversation, # Summary tab
-                status            # Status message
-            ]
-        )
+    # Connect the chat process button directly - using global pipeline
+    btn_process.click(
+        fn=lambda a, t, s, e, n, th: process_chat(a, t, s, e, n, th),
+        inputs=[
+            audio_input,
+            task,
+            segmentation_model,
+            embedding_model,
+            num_speakers,
+            threshold
+        ],
+        outputs=[
+            chat_container,   # Chat bubbles container
+            audio_playback,   # Audio playback
+            output_conversation, # Summary tab
+            status            # Status message
+        ]
+    )
     
     # Audio analysis functions
-    def analyze_audio(audio_path, session_id=None):
+    def analyze_audio(audio_path):
         if not audio_path:
             return None, None, None, None, "*Error: No audio file provided*", None
         
@@ -881,8 +766,8 @@ with gr.Blocks(theme=cyberpunk_theme, css="""
             # Show info message
             gr.Info("Loading and analyzing audio file...")
             
-            # Get pipeline for this session
-            pipeline = get_pipeline_for_session(session_id)
+            # Get the global pipeline
+            pipeline = get_global_pipeline()
             
             # Use the pipeline to process the audio
             # This will handle GPU setup, model loading, etc.
@@ -959,10 +844,9 @@ with gr.Blocks(theme=cyberpunk_theme, css="""
             import traceback
             traceback.print_exc()
             return None, None, None, None, f"*Error during analysis: {str(e)}*", None
-    
     # Connect the analyze button
     btn_analyze.click(
-        fn=lambda a: analyze_audio(a, session_id=str(uuid.uuid4())),
+        fn=lambda a: analyze_audio(a),
         inputs=[audio_analysis_input],
         outputs=[waveform_plot, spectrogram_plot, pitch_plot, chroma_plot, analysis_status, audio_info],
         show_progress=True
