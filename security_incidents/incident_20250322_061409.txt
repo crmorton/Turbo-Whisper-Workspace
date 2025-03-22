@@ -1,0 +1,26 @@
+SECURITY INCIDENT REPORT
+=======================
+
+Time: 2025-03-22 06:14:09
+Incident Type: Potential Weapon Threat
+Threat Level: 3/5
+Speakers Involved: Bystander, Aggressor, Patron
+
+Summary:
+A potential potential weapon threat situation was detected involving Bystander, Aggressor, Patron.
+The conversation contains concerning language related to: weapon, Security, bouncer, back off, back off.
+Security staff should monitor this situation closely.
+
+Key Conversation Segments:
+[1.5s - 3.0s] Patron: Sorry, didn't see you there.
+[3.0s - 4.5s] Aggressor: Whatever, just back off.
+[4.5s - 6.0s] Patron: I'm not looking for trouble.
+[10.0s - 11.5s] Aggressor: Mind your own business.
+[11.5s - 12.5s] Patron: I said back off!
+[12.5s - 14.5s] Bystander: Security! We need some help over here!
+[12.5s - 14.5s] Bystander: Security! We need some help over here!
+[14.5s - 16.0s] Patron: This guy's threatening me.
+[19.0s - 23.0s] Aggressor: You want to take this outside? I've got something in my car that'll make you regret this.
+[23.0s - 26.5s] Bystander: Whoa, are you talking about a weapon? Everyone needs to calm down right now.
+[26.5s - 28.0s] Bystander: I'm calling the bouncer.
+[26.5s - 28.0s] Bystander: I'm calling the bouncer.
