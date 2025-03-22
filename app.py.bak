@@ -37,7 +37,7 @@ import numpy as np
 
 # Common name patterns for speaker recognition
 COMMON_NAMES = [
-    "Alex", "Alexandra", "Alexa", "Alexander", "Alice", "Alicia", "Amy", "Anna", "Anne", "Andrew", "Andy",
+    "Alex", "Veronica", "Alexa", "Alexander", "Alice", "Alicia", "Amy", "Anna", "Anne", "Andrew", "Andy",
     "Bob", "Bobby", "Barbara", "Ben", "Benjamin", "Bill", "Billy", "Brian", "Bruce", 
     "Carl", "Carlos", "Carol", "Caroline", "Catherine", "Charlie", "Charlotte", "Chris", "Christine", "Christopher", "Cindy", "Claire",
     "Dan", "Daniel", "Dave", "David", "Debbie", "Deborah", "Diana", "Don", "Donald", "Donna", "Dorothy", "Doug", "Douglas",

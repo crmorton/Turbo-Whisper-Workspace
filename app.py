@@ -38,11 +38,31 @@ import numpy as np
 
 # Import LLM helper module
 try:
+    print("Attempting to import llm_helper module...")
     import llm_helper
+    print("Successfully imported llm_helper module")
     LLM_AVAILABLE = True
     AVAILABLE_LLM_MODELS = list(llm_helper.AVAILABLE_MODELS.keys())
-except ImportError:
-    print("LLM helper module not available. Using fallback methods.")
+    print(f"Available LLM models: {AVAILABLE_LLM_MODELS}")
+    
+    # Try to initialize LLM
+    print("Attempting to initialize LLM...")
+    llm = llm_helper.get_llm()
+    if llm:
+        print("Successfully initialized LLM!")
+    else:
+        print("LLM initialization returned None")
+        
+except ImportError as e:
+    print(f"LLM helper module not available: {e}")
+    import traceback
+    traceback.print_exc()
+    LLM_AVAILABLE = False
+    AVAILABLE_LLM_MODELS = []
+except Exception as e:
+    print(f"Unexpected error initializing LLM: {e}")
+    import traceback
+    traceback.print_exc()
     LLM_AVAILABLE = False
     AVAILABLE_LLM_MODELS = []
 
