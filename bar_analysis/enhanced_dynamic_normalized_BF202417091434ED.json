@@ -4,9 +4,9 @@
       "id": 0,
       "start": 0.0,
       "end": 10.0,
-      "text": "[Audio processed but no speech detected]",
+      "text": "[Audio processed but speech detection failed: AudioProcessingPipeline.process_audio() got an unexpected keyword argument 'vad_filter']",
       "speaker": "SPEAKER_00"
     }
   ],
-  "text": "[Audio processed but no speech detected]"
+  "text": "[Audio processed but speech detection failed]"
 }

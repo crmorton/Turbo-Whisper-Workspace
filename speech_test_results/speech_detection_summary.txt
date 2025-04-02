@@ -1,0 +1,20 @@
+SPEECH DETECTION TEST SUMMARY
+============================
+
+Audio File: BF202417091434ED.flac
+
+Results by DeepFilterNet Strength:
+--------------------------------
+Strength 0.0: ❌ FAILED - 0 segments, 0 words
+Strength 0.3: ❌ FAILED - 0 segments, 0 words
+Strength 0.5: ❌ FAILED - 0 segments, 0 words
+Strength 0.7: ❌ FAILED - 0 segments, 0 words
+Strength 1.0: ❌ FAILED - 0 segments, 0 words
+
+Recommendations:
+--------------
+No successful speech detection with any DeepFilterNet strength!
+Recommendations:
+1. Try processing without DeepFilterNet: python dynamic_bar_audio.py --skip-deepfilter
+2. Check if the audio file actually contains speech
+3. Try a different audio file

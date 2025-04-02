@@ -1,100 +1,134 @@
----
-license: ethical-ai
-title: CyberVox Audio Workspace
-sdk: gradio
-emoji: 🎧
-colorFrom: green
-colorTo: cyan
-short_description: Advanced Audio Processing with Cyberpunk Theme 🎧⚡
-sdk_version: 5.22.0
-pinned: true
-preload_from_hub:
-- openai/whisper-large-v3-turbo
----
+# Vocalis - Advanced Audio Processing
 
-# 🎧 CyberVox Audio Workspace ⚡
+Vocalis is a powerful audio processing package featuring:
+- Ultra-fast Whisper V3 Turbo Transcription
+- Advanced Speaker Diarization
+- Audio Analysis Tools
+- Security Monitoring
+- FastAPI Integration
 
-<div align="center">
-  <img src="https://i.imgur.com/YourBannerImageHere.png" width="600px" alt="CyberVox Banner">
-  <p><em>Advanced audio processing with a cyberpunk aesthetic</em></p>
-</div>
+## Features
 
-## 🚀 Features
+### Audio Processing
+- Transcription using Whisper V3 Turbo
+- Speaker diarization with pyannote.audio and sherpa-onnx
+- Speaker name identification
+- Conversation summarization
+- Topic extraction
 
-- **Ultra-fast Transcription** - Powered by Whisper V3 Turbo for lightning-fast audio transcription
-- **Speaker Diarization** - Automatically identify and separate different speakers in your audio
-- **Audio Analysis Tools** - Visualize waveforms, spectrograms, and other audio properties
-- **Cyberpunk UI** - Beautiful green-themed interface inspired by cyberpunk aesthetics
-- **Conversation Format** - Output transcripts in a readable conversation format
+### Security Monitoring
+- Detect potential security incidents in audio
+- Specialized bar security monitoring
+- Threat level assessment
+- Incident reporting
 
-## 🔧 Setup
+### API and UI
+- FastAPI integration for all functionality
+- Gradio UI for interactive usage
+- Command-line interface
 
-1. Clone this repository:
+## Installation
+
+### Basic Installation
+
 ```bash
-git clone https://github.com/yourusername/CyberVox-Audio-Workspace.git
-cd CyberVox-Audio-Workspace
+pip install vocalis
 ```
 
-2. Create a virtual environment and install dependencies:
+### With GPU Support
+
 ```bash
-./scripts/manage.sh setup
+pip install vocalis[gpu]
 ```
 
-3. Download speaker embedding models (recommended):
-```bash
-./scripts/download_models.sh
-```
-This will download all required speaker embedding models to the local `models` directory, making the application more reliable by not depending on remote repositories at runtime.
+### Development Installation
 
-4. Start the application:
 ```bash
-./scripts/manage.sh start
+pip install vocalis[dev]
 ```
 
-## 📋 Usage
+## Usage
 
-### Transcription & Diarization
+### Command Line Interface
 
-1. Upload your audio file in the "Transcription & Diarization" tab
-2. Set the number of speakers (or let the system estimate it)
-3. Choose between transcription and translation
-4. Click "Process Audio" to start processing
-5. View results in conversation format, raw text, or detailed JSON
+Vocalis provides a command-line interface for common tasks:
 
-### Audio Analysis
+```bash
+# Run the FastAPI server
+python -m vocalis api --port 8000
 
-1. Upload your audio file in the "Audio Analysis" tab
-2. Click "Analyze Audio" to visualize waveforms and spectrograms
-3. View detailed audio information
+# Run the Gradio UI
+python -m vocalis ui
 
-## 🧩 Architecture
+# Run security monitoring on a file
+python -m vocalis security --input audio.flac --threat-level 2
 
-The CyberVox Audio Workspace consists of several components:
+# Run bar-specific security monitoring on a directory
+python -m vocalis security --input ./examples/bar --bar
+```
 
-- `app.py` - Main application with Gradio UI
-- `model.py` - Interface to audio processing models
-- `diar.py` - Speaker diarization implementation
-- `utils/` - Utility modules for audio processing and visualization
-- `scripts/` - Management scripts for setup and maintenance
+### API Usage
 
-## 🔮 Future Plans
+Start the API server:
 
-- Audio enhancement tools (noise reduction, EQ, etc.)
-- Multi-language support
-- Custom speaker naming and identification
-- Export options (SRT, VTT, etc.)
-- Integration with video processing
+```bash
+python -m vocalis api
+```
 
-## 🙏 Credits
+Then use the API endpoints:
+
+- `POST /api/transcribe` - Transcribe and diarize audio
+- `POST /api/security/analyze` - Analyze audio for security concerns
+- `POST /api/analyze` - Analyze audio characteristics
+- `GET /api/models` - Get available models
+
+### Python API
+
+```python
+from vocalis.core.audio_pipeline import AudioProcessingPipeline
+
+# Initialize pipeline
+pipeline = AudioProcessingPipeline()
+
+# Process audio
+result = pipeline.process_audio(
+    audio_path="audio.flac",
+    task="transcribe",
+    num_speakers=2
+)
+
+# Access results
+print(result["text"])
+for segment in result["merged_segments"]:
+    print(f"{segment['speaker']}: {segment['text']}")
+```
+
+## Security Monitoring
+
+```python
+from vocalis.security.security_monitor import SecurityMonitor
+
+# Initialize security monitor
+monitor = SecurityMonitor(output_dir="security_incidents", min_threat_level=2)
+
+# Process audio file
+incident = monitor.process_audio_file("audio.flac")
+
+if incident:
+    print(f"Security incident detected: {incident.incident_type}")
+    print(f"Threat level: {incident.threat_level}/5")
+    print(f"Summary: {incident.summary}")
+```
+
+## Credits
 
 This project builds upon several amazing technologies:
-- [Whisper V3 Turbo](https://github.com/openai/whisper)
 - [insanely-fast-whisper](https://github.com/Vaibhavs10/insanely-fast-whisper)
 - [pyannote.audio](https://github.com/pyannote/pyannote-audio)
 - [sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx)
-- [8b-is Team](https://8b.is/)
+- [FastAPI](https://fastapi.tiangolo.com/)
 - [Gradio](https://gradio.app/)
 
-## 📜 License
+## License
 
-This project is licensed under the terms specified in LICENSE.txt
+Apache License 2.0

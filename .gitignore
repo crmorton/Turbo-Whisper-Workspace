@@ -8,3 +8,10 @@ sherpa-onnx/*
 sherpa-onnx-apk/    
 
 
+settingstest.json
+bar_analysis/
+bar_security/
+
+deepfilter_test_results/
+
+test_temps/

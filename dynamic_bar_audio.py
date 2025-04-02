@@ -87,13 +87,15 @@ def check_dependencies():
             logger.error(f"Failed to install dependencies: {e}")
             return False
 
-def apply_deepfilter(input_file, output_dir=None):
+def apply_deepfilter(input_file, output_dir=None, strength=0.15):
     """
     Apply DeepFilterNet noise suppression to audio file
     
     Parameters:
     - input_file: Path to the input audio file
     - output_dir: Directory to save the processed file (default: same as input)
+    - strength: Strength of noise suppression (0.0-1.0, default: 0.5)
+                Lower values preserve more speech but remove less noise
     
     Returns:
     - Path to the noise-suppressed audio file
@@ -108,10 +110,13 @@ def apply_deepfilter(input_file, output_dir=None):
         import numpy as np
         import soundfile as sf
         
-        logger.info(f"🎧 Applying DeepFilterNet noise suppression to: {input_file}")
+        logger.info(f"🎧 Applying DeepFilterNet noise suppression to: {input_file} (strength: {strength})")
         
         # Load the audio file
         data, samplerate = sf.read(input_file)
+        
+        # Make a backup of original data for mixing
+        original_data = data.copy()
         
         # Check if we need to resample (DeepFilterNet works best with 48kHz)
         original_samplerate = samplerate
@@ -132,6 +137,52 @@ def apply_deepfilter(input_file, output_dir=None):
         logger.info("Applying noise suppression...")
         enhanced_data = enhance(model, df_state, data)
         
+        # Resample back to original rate if needed
+        if original_samplerate != 48000:
+            try:
+                import librosa
+                logger.info(f"Resampling back to original rate: {original_samplerate}Hz")
+                enhanced_data = librosa.resample(y=enhanced_data, orig_sr=48000, target_sr=original_samplerate)
+                samplerate = original_samplerate
+                # Also resample original data if it was resampled
+                if original_data.shape != enhanced_data.shape:
+                    original_data = librosa.resample(y=original_data.astype(np.float32), 
+                                                    orig_sr=original_samplerate, 
+                                                    target_sr=original_samplerate)
+            except ImportError:
+                pass
+        
+        # Mix original and enhanced audio based on strength parameter
+        # This allows us to preserve more of the original speech if needed
+        logger.info(f"Mixing original and enhanced audio with adaptive speech preservation (strength: {strength})")
+        
+        # Use a more sophisticated mixing approach that preserves speech transients
+        # Calculate a simple voice activity detection mask
+        energy = np.abs(original_data)
+        threshold = np.percentile(energy, 70)  # Use 70th percentile as threshold
+        voice_mask = energy > threshold
+        
+        # Apply less filtering to high-energy regions (likely speech)
+        speech_strength = strength * 0.5  # Use half strength for speech
+        noise_strength = strength
+        
+        # Create a smoothed mask to avoid artifacts
+        from scipy.ndimage import gaussian_filter1d
+        if len(voice_mask.shape) > 1 and voice_mask.shape[1] > 1:
+            # Stereo
+            smooth_mask = np.zeros_like(voice_mask, dtype=float)
+            for ch in range(voice_mask.shape[1]):
+                smooth_mask[:, ch] = gaussian_filter1d(voice_mask[:, ch].astype(float), sigma=samplerate/100)
+        else:
+            # Mono
+            smooth_mask = gaussian_filter1d(voice_mask.astype(float), sigma=samplerate/100)
+            
+        # Apply adaptive mixing
+        mixed_data = (1 - (smooth_mask * speech_strength + (1 - smooth_mask) * noise_strength)) * original_data + \
+                     (smooth_mask * speech_strength + (1 - smooth_mask) * noise_strength) * enhanced_data
+                     
+        logger.info(f"Applied adaptive mixing with speech preservation")
+        
         # Determine output path
         if output_dir is None:
             input_dir = os.path.dirname(input_file)
@@ -140,19 +191,15 @@ def apply_deepfilter(input_file, output_dir=None):
         input_filename = os.path.basename(input_file)
         output_file = os.path.join(output_dir, f"deepfiltered_{input_filename}")
         
-        # Resample back to original rate if needed
-        if original_samplerate != 48000:
-            try:
-                import librosa
-                logger.info(f"Resampling back to original rate: {original_samplerate}Hz")
-                enhanced_data = librosa.resample(y=enhanced_data, orig_sr=48000, target_sr=original_samplerate)
-                samplerate = original_samplerate
-            except ImportError:
-                pass
-        
         # Save the enhanced audio
         logger.info(f"Saving noise-suppressed audio to: {output_file}")
-        sf.write(output_file, enhanced_data, samplerate)
+        sf.write(output_file, mixed_data, samplerate)
+        
+        # Also save a diagnostic version with full strength for comparison
+        if strength < 1.0:
+            diag_file = os.path.join(output_dir, f"deepfiltered_full_{input_filename}")
+            logger.info(f"Saving diagnostic full-strength version to: {diag_file}")
+            sf.write(diag_file, enhanced_data, samplerate)
         
         return output_file
         
@@ -461,12 +508,57 @@ def process_with_turbo_whisper(audio_file):
         # Process the audio - using the correct parameter name
         logger.info(f"Processing audio with Turbo-Whisper: {audio_file}")
         try:
+            # Try with ULTRA aggressive speech detection settings - we KNOW there's speech!
+            logger.info("Using ULTRA aggressive speech detection settings - we KNOW there's speech!")
             result = pipeline.process_audio(
                 audio_path=audio_file,  # Correct parameter name
                 task="transcribe",
-                num_speakers=2,  # Force at least 2 speakers instead of auto-detect
-                threshold=0.4  # Lower threshold for better detection
+                num_speakers=2,         # Force at least 2 speakers instead of auto-detect
+                threshold=0.05,         # Ultra-low threshold for better detection
+                vad_filter=False,       # Disable VAD filter which might be too aggressive
+                word_timestamps=True,   # Get word timestamps for better analysis
+                compute_word_confidence=True,  # Get confidence scores for words
+                beam_size=10,           # Larger beam size for better search
+                best_of=5,              # Consider more candidates
+                temperature=0.0,        # No randomness
+                initial_prompt="This is a recording from a bar with people talking. There is speech in this audio about bar security and conversations."  # Help the model with context
             )
+            
+            # Check if we got any meaningful segments
+            if not result or "segments" not in result or not result["segments"]:
+                logger.warning("No segments detected with first attempt, trying with different settings...")
+                # Try again with different settings - absolute last resort
+                result = pipeline.process_audio(
+                    audio_path=audio_file,
+                    task="transcribe",
+                    num_speakers=1,     # Try with just one speaker
+                    threshold=0.01,     # Ridiculously low threshold
+                    vad_filter=False,   # Disable VAD filter
+                    word_timestamps=True,
+                    beam_size=15,       # Even larger beam size
+                    best_of=10,         # Consider even more candidates
+                    temperature=0.0,    # No randomness
+                    condition_on_previous_text=False,  # Don't condition on previous text
+                    initial_prompt="Bar conversation with background noise. People are talking about security concerns."  # Different prompt
+                )
+                
+                # If still no segments, create a minimal segment with a note
+                if not result or "segments" not in result or not result["segments"]:
+                    logger.warning("Still no segments detected after multiple attempts!")
+                    logger.warning("Creating a minimal segment with a note about speech detection failure")
+                    result = {
+                        "segments": [
+                            {
+                                "id": 0,
+                                "start": 0.0,
+                                "end": 10.0,
+                                "text": "[Speech detection failed despite multiple attempts. Try processing with --skip-deepfilter]",
+                                "speaker": "SYSTEM_NOTE"
+                            }
+                        ],
+                        "text": "[Speech detection failed despite multiple attempts. Try processing with --skip-deepfilter]"
+                    }
+                
         except Exception as pipeline_error:
             logger.error(f"Pipeline processing error: {pipeline_error}")
             # Create a minimal valid result structure
@@ -477,11 +569,11 @@ def process_with_turbo_whisper(audio_file):
                         "id": 0,
                         "start": 0.0,
                         "end": 10.0,
-                        "text": "[Audio processed but no speech detected]",
+                        "text": f"[Audio processed but speech detection failed: {pipeline_error}]",
                         "speaker": "SPEAKER_00"
                     }
                 ],
-                "text": "[Audio processed but no speech detected]"
+                "text": "[Audio processed but speech detection failed]"
             }
         
         if not result or "segments" not in result or not result["segments"]:
@@ -656,13 +748,15 @@ def main():
                         help="Apply additional audio enhancement effects")
     parser.add_argument("--skip-deepfilter", action="store_true",
                         help="Skip DeepFilterNet noise suppression")
+    parser.add_argument("--deepfilter-strength", type=float, default=0.15,
+                        help="DeepFilterNet strength (0.0-1.0, default: 0.15)")
     
     args = parser.parse_args()
     
     # Print header
     print("\n" + "=" * 80)
     print(" 🎧 DYNAMIC BAR AUDIO PROCESSOR 🎧 ".center(80, "="))
-    print(" With DeepFilterNet Noise Suppression ".center(80, "-"))
+    print(" With DeepFilterNet Noise Suppression & Enhanced Speech Detection ".center(80, "-"))
     print("=" * 80 + "\n")
     
     # Determine input file (prioritize --input flag if provided)
@@ -677,13 +771,16 @@ def main():
     if not check_dependencies():
         sys.exit(1)
     
-    # First apply DeepFilterNet noise suppression if available
-    if DEEPFILTER_AVAILABLE:
-        logger.info("🎧 Step 1: Applying DeepFilterNet noise suppression")
-        filtered_file = apply_deepfilter(input_file, args.output_dir)
+    # First apply DeepFilterNet noise suppression if available and not skipped
+    if DEEPFILTER_AVAILABLE and not args.skip_deepfilter:
+        logger.info(f"🎧 Step 1: Applying DeepFilterNet noise suppression (strength: {args.deepfilter_strength})")
+        filtered_file = apply_deepfilter(input_file, args.output_dir, args.deepfilter_strength)
     else:
         filtered_file = input_file
-        logger.info("Skipping noise suppression (DeepFilterNet not available)")
+        if args.skip_deepfilter:
+            logger.info("Skipping noise suppression (user requested)")
+        else:
+            logger.info("Skipping noise suppression (DeepFilterNet not available)")
     
     # Apply dynamic normalization to the filtered audio
     logger.info("🎚️ Step 2: Applying dynamic normalization")

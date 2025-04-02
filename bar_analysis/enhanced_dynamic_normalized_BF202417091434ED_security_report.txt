@@ -2,7 +2,7 @@ BAR SECURITY REPORT
 ===================
 
 Audio File: enhanced_dynamic_normalized_BF202417091434ED.flac
-Date: 2025-03-22 07:16:36
+Date: 2025-03-22 07:31:47
 
 Security Concern Level: 0/5
 
@@ -13,7 +13,7 @@ Speakers:
 - SPEAKER_00: 1 segments
 
 Full Transcript:
-[0.00 - 10.00] SPEAKER_00: [Audio processed but no speech detected]
+[0.00 - 10.00] SPEAKER_00: [Audio processed but speech detection failed: AudioProcessingPipeline.process_audio() got an unexpected keyword argument 'vad_filter']
 
 AI-Generated Summary:
 Conversation summary not available (LLM not loaded)
