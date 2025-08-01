@@ -1,0 +1,36 @@
+# Core deep learning libraries
+numpy==1.26.3
+torch==2.3.1+cu118
+torchaudio==2.3.1+cu118
+torchvision==0.18.1+cu118
+transformers==4.54.1
+huggingface-hub==0.34.3
+
+# Audio processing libraries
+audioread==3.0.1
+librosa==0.11.0
+noisereduce==3.0.3
+pydub==0.25.1
+soundfile==0.13.1
+
+# ML & Data Analysis
+matplotlib==3.10.5
+scikit-learn==1.7.1
+scipy==1.15.3
+pandas==2.3.1
+
+# Speaker diarization
+onnxruntime-gpu @ http://host.docker.internal:8081/repository/my-blob-store/aiinfra.pkgs.visualstudio.com/_packaging/pypi/download/onnxruntime-gpu/1.20.1/onnxruntime_gpu-1.20.1-cp310-cp310-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl
+sherpa-onnx==1.11.2+cuda
+
+# Web UI
+fastapi==0.116.1
+gradio==5.39.0
+uvicorn==0.35.0
+
+# Utilities
+python-dotenv==1.1.1
+tqdm==4.67.1
+
+# Development
+ruff==0.12.7
