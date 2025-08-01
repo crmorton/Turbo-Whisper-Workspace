@@ -227,7 +227,8 @@ def download_models_to_local(models_dir="models", force_download=False, use_auth
                 print(f"✅ Successfully downloaded {model['name']} from {source['repo']}")
                 downloaded = True
             except Exception as e:
-                print(f"  ❌ Failed from {source['repo']}: {str(e).split('\n')[0]}")
+                eDetail = str(e).split('\n')[0]
+                print(f"  ❌ Failed from {source['repo']}: {eDetail}")
         
         if not downloaded:
             print(f"⚠️ Could not download {model['name']} from any source")
